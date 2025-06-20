@@ -1,0 +1,122 @@
+---
+title: "What is music? Subset of stimuli presented in Exp1-3 (n = 33)"
+output: html_notebook
+author: Pauline Larrouy-Maestri
+---
+
+Clear and load
+```{r}
+rm(list = ls())
+
+library(readxl)
+library(dplyr)
+library(tidyr)
+library(corrplot)
+library(ggplot2)
+library(rstatix)
+library(flextable)
+library(psych)
+library(ggplot2)
+library(lme4)
+library(lmerTest)
+library(performance)
+library(broom.mixed)
+
+setwd("/Users/p.larrouy/Desktop/Music_osf/SI1")
+
+
+# Reading the Excel files
+df1 <- read_excel("Data/Exp1_data.xlsx",sheet = "Data_1")
+df2 <- read_excel("Data/Exp2_data.xlsx",sheet = "Data_2")
+df3 <- read_excel("Data/Exp3_data.xlsx",sheet = "Data_3")
+
+# Convert the Confidence column to character type in all data frames
+df1$Confidence <- as.character(df1$Confidence)
+df2$Confidence <- as.character(df2$Confidence)
+df3$Confidence <- as.character(df3$Confidence)
+
+# Bind the data frames
+merged_df <- bind_rows(df1, df2, df3)
+
+# exclude participant who have NAs for the OTHER condition only :)
+merged_df<-filter(merged_df, Participant !="486404") #45 
+merged_df<-filter(merged_df, Participant !="487123") #97
+
+# Check number of participants for each experiment without duplicates (here, Exp1)
+unique(merged_df$Participant)
+n_distinct(merged_df$Participant)
+```
+
+
+Select the ratings for the 33 stimuli presented in all three experiments
+```{r}
+stimuli_list <- c( "M_bells","M_caballo_blanco", "M_cana_verde", "M_experimental01","M_experimental04", "M_experimental05","M_experimental11", "M_experimental17", "M_faa_gani", "M_mariposa", "M_meditation", "M_miroloi", "M_piano_noise",  "M_ungava_bay", "M_zapateada_criollo", "N_bird01", "N_bird02", "N_bird03", "N_churchbells", "N_cicads", "N_coffee_grinder_new", "N_cow_bells", "N_crickets", "N_dishwasher", "N_glass_clicking", "N_guacharaca", "N_metal_percussion", "N_metal_stairs", "N_printer", "N_rhinolophe", "N_typewriter", "N_wind_chime", "N_wingflap") 
+
+merged_df_33 <- merged_df %>%
+  filter(Stim %in% stimuli_list)
+
+unique(merged_df_33$Stim)
+n_distinct(merged_df_33$Stim)
+
+unique(merged_df_33$Participant)
+n_distinct(merged_df_33$Participant)
+```
+
+*Comparison across groups: correlation matrix, anova, figure*
+
+Aggregate per Stimuli and Condition (n = 10: "self", "other", "long", "short", "BB", "WBC", "WBR" - with test and retest for the Exp3)
+```{r}
+Aggdata <- aggregate(Music_answer ~ Condition + Condition_2 + Stim, data = merged_df_33, mean, na.rm = TRUE)
+
+# Step 2: Combine Condition and Condition_2 into a single column
+Aggdata <- Aggdata %>%
+  unite("Combined_Condition", Condition, Condition_2, sep = "_", remove = TRUE)
+
+unique(Aggdata$Combined_Condition)
+n_distinct(Aggdata$Combined_Condition)
+```
+
+Create a wide version for correlations and repeated measures
+```{r}
+Cor_data <- spread(Aggdata, key = Combined_Condition, value = Music_answer)
+
+```
+
+Correlation between variables
+```{r}
+ma <- cor(Cor_data[, c("long_na","other_na","self_na","short_na","BB_retest","WBC_retest","WBR_retest","BB_test","WBC_test","WBR_test")])
+ma
+```
+p values of these correlations
+```{r}
+p.ma <- cor.mtest(ma)
+p.ma
+```
+
+
+Illustration of the correlations via correlation matrix
+
+```{r}
+ma <- cor(Cor_data[, c("self_na","other_na","short_na","long_na","BB_test","WBC_test","WBR_test","BB_retest","WBC_retest","WBR_retest")])
+
+p.ma <- cor.mtest(ma)
+
+# Modify column and row names
+colnames(ma) <- c("self","other","short","long","BB_1","WBC_1","WBR_1","BB_2","WBC_2","WBR_2")  
+rownames(ma) <- c("self","other","short","long","BB_1","WBC_1","WBR_1","BB_2","WBC_2","WBR_2")  
+
+# Create a grayscale color palette (dark for low correlation, white for high correlation)
+col_grayscale <- colorRampPalette(c("black", "white"))(200)
+
+# Create the correlation plot with grayscale colors
+corrplot(ma, 
+         type = "lower", 
+         col = col_grayscale,   # Apply the grayscale color palette
+         tl.col = "black",      # Color of the text labels
+         tl.cex = 0.9,          # Size of the text labels
+         addCoef.col = "black", # Add correlation coefficients in black color
+         number.cex = 0.8)      # Size of the correlation coefficient numbers
+
+
+```
+*Relation between bias and participants' characteristics: preprocessing, model, figure*

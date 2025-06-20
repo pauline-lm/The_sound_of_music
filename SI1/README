@@ -1,0 +1,5 @@
+Data and code for the SI1
+
+- Data: Folder containing the datasets of Experiments 1-3
+- Music_or_not_SI_ambiguous.Rmd: Analysis script
+- Music_or_not_SI_ambiguous.nb.html: Output of the analyses

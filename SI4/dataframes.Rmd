@@ -1,0 +1,270 @@
+
+```{r}
+#install.packages("maditr")
+library(maditr)
+library(stringr)
+library(hablar)
+library(readxl)
+library(dplyr)
+library(writexl)
+
+```
+
+First I come up with the df called features_data, and have a more structured and clean table there
+```{r}
+
+ratings_scales <- dplyr::select(similarity_sep, exp_subject_id, task_name, audio_name, audio_group, similarity, ae_01, ae_02, ae_05, ae_07, bais_v_01, bais_v_02, bais_v_03, bais_v_04, bais_v_05, bais_v_06, bais_v_07, bais_v_08, bais_v_09, bais_v_10, bais_v_11, bais_v_12, bais_v_13, bais_v_14, mt_01, mt_02, mt_03, mt_06, mt_07, pa_04, pa_08, sa_01, sa_02, sa_03, sa_04, sa_05, sa_06, em_04, open1, open2, open3, open4, open5, open6, open7, open8, open9, open10)
+
+```
+
+
+Data Frames for MM1 analysis
+
+```{r}
+
+similarity_mm1 <- similarity_sep %>%
+  select(exp_subject_id, audio_name, similarity) %>%
+  pivot_wider(names_from = audio_name, values_from = similarity)
+
+```
+
+
+
+A dataframe for the means of all audios
+```{r}
+
+similarity_desc <- similarity_sep %>%
+  group_by(audio_name) %>%
+  summarize(
+            mean_similarity = mean(similarity, na.rm = TRUE),
+            se = sd(similarity, na.rm = TRUE) / sqrt(n()))
+
+##with blocknames
+similarity_desc2 <- similarity_desc %>%
+  left_join(
+    data %>%
+      distinct(audio_name, block_name),  # Retain unique combinations
+    by = "audio_name"
+  )
+library(writexl)
+write_xlsx(similarity_desc2, "similarity_desc2.xlsx")
+
+mean(similarity_clean$similarity)
+sd(similarity_clean$similarity)
+
+
+```
+
+
+
+
+Calculate Gold-MSI
+```{r}
+
+gold <- dplyr::select(data, exp_subject_id, ae_01, ae_02, ae_05, ae_07, mt_01, mt_02, mt_03, mt_06, mt_07, pa_04, pa_08, sa_01, sa_02, sa_03, sa_04, sa_05, sa_06, em_04)
+
+gold <- aggregated_data <- aggregate(. ~ exp_subject_id, data = gold, FUN = function(x) x[!is.na(x)][1])
+
+gold2<-dplyr::select(gold, ! exp_subject_id)
+
+keys_gold <- c("sa_05", "sa_04", "mt_03", "mt_07", "pa_08")
+
+rec <-  psych::reverse.code(keys = keys_gold, items = gold2, mini = 1, maxi = 7) 
+
+# View(rec)
+rec <- as.data.frame(rec)
+
+#GM_sum 
+rec$gold=rowSums(cbind(rec$ae_01,rec$ae_02,rec$ae_05,rec$ae_07,rec$em_04,rec$mt_01,rec$mt_02,rec$`mt_03-`,rec$mt_06,rec$`mt_07-`,rec$pa_04,rec$`pa_08-`,rec$sa_01,rec$sa_02,rec$sa_03,rec$`sa_04-`,rec$`sa_05-`,rec$sa_06))
+
+rec$exp_subject_id <- gold$exp_subject_id
+gold_score <- dplyr::select(rec, exp_subject_id, gold)
+
+
+```
+
+
+Calculate BAIS-V
+```{r}
+
+bais <- dplyr::select(data, exp_subject_id, bais_v_01, bais_v_02, bais_v_03, bais_v_04, bais_v_05, bais_v_06, bais_v_07, bais_v_08, bais_v_09, bais_v_10, bais_v_11, bais_v_12, bais_v_13, bais_v_14)
+bais <- na.omit(bais)
+rec <- as.data.frame(bais)
+
+#Mean_score
+rec$bais=rowMeans(cbind(rec$bais_v_01,rec$bais_v_02,rec$bais_v_03,rec$bais_v_04,rec$bais_v_05,rec$bais_v_06,rec$bais_v_07,rec$bais_v_08,rec$bais_v_09,rec$bais_v_10,rec$bais_v_11,rec$bais_v_12,rec$bais_v_13,rec$bais_v_14))
+rec$exp_subject_id <- bais$exp_subject_id
+
+BAIS_score<-dplyr::select(rec,exp_subject_id, bais)
+
+scales <-merge(gold_score, BAIS_score, by = "exp_subject_id")
+
+```
+
+
+Calculate Openness
+
+```{r}
+
+openness <- dplyr::select(data, exp_subject_id, open1, open2, open3, open4, open5, open6, open7, open8, open9, open10)
+
+reverse_code <- function(x) {
+  return(6 - x)
+}
+
+# Apply reverse coding and calculate total_openness
+openness <- openness %>%
+  mutate(
+    open2 = reverse_code(open2),
+    open4 = reverse_code(open4),
+    open6 = reverse_code(open6),
+    open8 = reverse_code(open8),
+    open10 = reverse_code(open10)
+  ) %>%
+  group_by(exp_subject_id) %>%
+  summarise(total_openness = sum(c_across(open1:open10), na.rm = TRUE))
+
+# View the result
+print(openness)
+
+scales <- merge(scales, openness, by ="exp_subject_id")
+
+```
+
+Let's compute genres 
+
+```{r}
+
+genres <- data %>%
+  dplyr::select(exp_subject_id, top40, pop, rock, classical, noise, experimental, edm) %>%
+  na.omit() 
+
+```
+
+
+Calculate the mean age
+```{r}
+
+mean(demo_data_everyone$age)
+sd(demo_data_everyone$age)
+
+
+```
+
+
+Data cleaning
+
+Reading in acoustic information and coming up with similarity and dissimilarity matrices for future plotting
+
+```{r}
+
+acoustic_pc <- read_xlsx("acoustic_pc.xlsx",
+                               sheet = "Sheet1")
+
+acoustic_features <- read_xlsx("selected_acoustic.xlsx",
+                               sheet = "Sheet1")
+  
+similarity_clean_sorted <- similarity_clean %>%
+  mutate(
+    audio1_sorted = pmin(audio1, audio2),
+    audio2_sorted = pmax(audio1, audio2)
+  )
+similarity_matrix_sorted <- dcast(similarity_clean_sorted, audio2_sorted ~ audio1_sorted, value.var = "similarity", fun.aggregate = mean, fill = 0)
+rownames(similarity_matrix_sorted) <- similarity_matrix_sorted$audio2_sorted
+similarity_matrix_sorted$audio2_sorted <- NULL
+
+similarity_matrix_sorted_matrix <- as.matrix(similarity_matrix_sorted)
+
+###Create dfs to be able to do this. Since participants rated Stimulus1-Stimulus2 but not S2-S1, distance matrix is impossible to make. This is because how one half of the matrix is identical ot the other half... So we change the order of columns, duplicate it, and the bind it to the original df
+
+similarity_clean1 <- similarity_clean %>%
+  select(audio1, audio2, similarity)
+
+similarity_clean2 <- similarity_clean %>%
+  mutate(audio3 = audio1,
+         audio4 = audio2) %>%
+  select(audio4, audio3, similarity)
+
+similarity_clean2 <- similarity_clean2 %>%
+  rename(audio1 = audio4,
+         audio2 = audio3)
+
+similarity_double <- rbind(similarity_clean1, similarity_clean2)
+
+dissimilarity_double <- similarity_double %>%
+  mutate(distance = 100 - similarity) %>%
+  select(audio1, audio2, distance)
+
+dissimilarity <- similarity_double %>%
+  mutate(distance = 100 - similarity) %>%
+   mutate(
+    audio1_sorted = pmin(audio1, audio2),
+    audio2_sorted = pmax(audio1, audio2)
+  )
+distance_matrix <- dcast(dissimilarity_double, audio2 ~ audio1, value.var = "distance", fun.aggregate = mean, fill = 0)
+
+similarity_matrix <- dcast(similarity_double, audio2 ~ audio1, value.var = "similarity", fun.aggregate = mean, fill = 0)
+
+
+rownames(similarity_matrix) <- similarity_matrix$audio2
+
+rownames(distance_matrix) <- distance_matrix$audio2
+
+# Remove the first column from the matrix
+distance_matrix <- distance_matrix[, -1]
+similarity_matrix <- similarity_matrix[, -1]
+
+distance_matrix <- as.matrix(distance_matrix)
+similarity_matrix <- as.matrix(similarity_matrix)
+
+
+# Assign row and column names to the similarity matrix
+#rownames(similarity_matrix_sorted_matrix) <- stimuli_names
+#colnames(similarity_matrix_sorted_matrix) <- stimuli_names
+
+
+# Plot the heatmap without dendrograms and ordering
+
+distance_matrix_flipped_horizontally <- distance_matrix[, ncol(distance_matrix):1]
+
+
+distance_matrix2 <- distance_matrix
+
+distance_matrix2[lower.tri(distance_matrix2)] <- NA
+
+distance_matrix3 <- distance_matrix
+distance_matrix3[upper.tri(distance_matrix3)] <- NA
+
+similarity_matrix2 <- similarity_matrix
+similarity_matrix2[upper.tri(similarity_matrix2)] <- NA
+
+```
+
+
+Let's calculate the mean similarity score per each audio
+
+```{r}
+
+mean_similarity1 <- similarity_clean %>%
+   group_by(audio1) %>%
+  summarize(mean_similarity1 = mean(similarity)) 
+mean_similarity1$audio_name <- mean_similarity1$audio1
+
+mean_similarity2 <- similarity_clean %>%
+    group_by(audio2) %>%
+  summarize(mean_similarity2 = mean(similarity)) 
+mean_similarity2$audio_name <- mean_similarity2$audio2
+
+mean_similarity <- merge(mean_similarity1, mean_similarity2, by = "audio_name") 
+
+mean_similarity <- mean_similarity %>%
+  group_by(audio_name) %>%
+  mutate(mean_similarity = (mean_similarity1 + mean_similarity2) / 2) %>%
+  select(audio_name, mean_similarity)
+  
+
+
+
+```
+
+

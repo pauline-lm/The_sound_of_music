@@ -1,0 +1,225 @@
+
+```{r}
+
+library(tidyverse)
+library(stringr)
+library(hablar)
+library(readxl)
+library(dplyr)
+library(writexl)
+
+#install.packages("writexl")
+#install.packages("hablar")
+
+```
+
+```{r}
+
+setwd("C:/Users/talip/Desktop/MPIAE/Perceptual features study/data/similarity")
+
+audio_features <- read_xlsx("audio_features.xlsx", sheet = "Sheet1")
+audio_features <- audio_features %>%
+  filter(label == "music") %>%
+  select(!label)
+
+data <- read_csv("trials_and_sessions.csv")
+
+untouched_data <- data
+
+
+ratings_lme <- read_xlsx("ratings_lme.xlsx", sheet = "Sheet 1")
+
+
+```
+
+
+Read in data
+```{r}
+data <- janitor::clean_names(data)
+
+data %>% distinct(crowdsourcing_subj_id) 
+data %>% distinct(exp_subject_id) 
+data %>% distinct(prolific_id)     
+
+
+participants <- data %>%
+  filter(task_name == "Instructions") %>%
+  distinct(exp_subject_id, prolific_id)
+
+
+```
+
+
+Make column names with lowercase letters and change column data types to logical
+
+```{r}
+
+
+data <- data %>% 
+  hablar::convert(lgl(completed, 
+              informed_consent,
+              ends_with("_fam")
+              )
+          )
+
+
+
+
+data <- data %>%
+
+  mutate(audio_group = case_when(
+
+    startsWith(audio_name, "M_") ~ "music",
+
+    startsWith(audio_name, "N_") ~ "not_music",
+
+    startsWith(audio_name, "SIGNAL_") ~ "signal",
+  ))
+
+```
+
+Creating a DF for demographics of participants (IT DOESN'T SHOW 1 PARTICIPANT HERE BECAUSE OF INCOMPLETE DATA, SO IF U SEE 15 PARTICIPANT IN DEMO_DATA_EVERYONE, IT'S ACTUALLY 16)
+
+```{r}
+
+demo_data_everyone <- data %>% 
+  filter(task_name == "Demographic_data") %>% 
+  dplyr::select(exp_subject_id, age, gender, hearing_impairments, block_name,
+         browser_spec, completed, crowdsourcing_code, crowdsourcing_subj_id, start_time, start_time_local, end_time, end_time_local, 
+         session_nr, session_token, group_nr)
+
+# join demo_data with columns from introduction, consent and additional questions
+demo_data_everyone <- demo_data_everyone %>% 
+  left_join(
+    data %>% 
+      filter(task_name == "Informed_consent") %>% 
+      dplyr::select(exp_subject_id, informed_consent),
+    join_by(exp_subject_id)
+  ) %>% 
+  left_join(
+    data %>% 
+      filter(task_name == "Honest_answers") %>% 
+      dplyr::select(exp_subject_id, conscientious, wear_headphones),
+    join_by(exp_subject_id)
+  ) %>%
+  left_join(
+    data %>%
+      filter(task_name == "Instructions") %>%
+      dplyr::select(exp_subject_id, prolific_id),
+    join_by(exp_subject_id)
+  )
+
+
+
+data %>%
+  distinct(exp_subject_id)
+
+data %>%
+  distinct(prolific_id)
+
+part_per_condition <- demo_data_everyone %>%
+  group_by(block_name) %>%
+  summarize(count = n())
+
+```
+
+######################
+ EXCLUSION CRITERIA 
+######################
+
+```{r}
+
+incomplete <- data %>%
+  filter(completed != TRUE) %>% 
+  dplyr::select(exp_subject_id) %>% 
+  distinct(exp_subject_id) %>%
+  deframe()
+incomplete
+
+data <- data %>% filter(!exp_subject_id %in% incomplete)
+
+# Exclude participants that did not consent
+no_consent <- data %>% 
+  filter(task_name == "Informed_consent" & informed_consent != TRUE) %>% 
+  dplyr::select(exp_subject_id) %>% 
+  distinct(exp_subject_id) %>%
+  deframe()
+no_consent
+
+
+data <- data %>% filter(!exp_subject_id %in% no_consent)
+
+
+# Exclude participants that have hearing impairments?
+hearing_impairement <- data %>%
+  filter(task_name == "Demographic_data" & hearing_impairments != "No") %>% 
+  dplyr::select(exp_subject_id) %>% 
+  distinct(exp_subject_id) %>%
+  deframe()
+hearing_impairement
+
+
+data <- data %>% filter(!exp_subject_id %in% hearing_impairement)
+
+
+
+
+# Exclude participants who missed too many attention checks >80%
+
+bark_data <- data %>%
+  filter(audio_group == "signal") %>%
+  group_by(exp_subject_id) %>%
+  summarise(mean_similarity = mean(similarity, na.rm = TRUE)) %>%
+  dplyr::select(exp_subject_id, mean_similarity) 
+
+no_attention <- bark_data %>% 
+  group_by(exp_subject_id) %>% 
+  filter(mean_similarity < 80) %>% 
+  dplyr::select(exp_subject_id) %>% 
+  deframe()
+no_attention
+
+data <- data %>% filter(!exp_subject_id %in% no_attention)
+
+
+participants <- participants %>%
+  mutate(
+    attention_check = ifelse(exp_subject_id %in% no_attention, 0, 1),
+    completed = ifelse(exp_subject_id %in% incomplete, 0, 1),
+    inclusion = ifelse(attention_check == 0 | completed == 0, 0, 1)
+  )
+
+participants_passed <- participants %>%
+  filter(!exp_subject_id %in% incomplete,
+         !exp_subject_id %in% no_attention,
+         !exp_subject_id %in% no_consent,
+         !exp_subject_id %in% hearing_impairement)
+
+
+
+```
+
+
+Seperate the 2 audio names from each other into different columns, and come up with a df with just audio names and similarity ratings
+```{r}
+
+similarity_sep <- data %>%
+  filter(task_name %in% c("Rating", "Rating2", "Rating3", "Rating4", "Rating5", "Rating6") & audio_group != "signal") %>%
+  separate_wider_delim(
+    audio_name,
+    delim = ".mp3",
+    names = c("audio1", "audio2", "rest"),
+    cols_remove = FALSE
+  ) %>%
+  select(!"rest") %>%
+  mutate(
+    audio1 = str_c(audio1,".mp3"),
+    audio2 = str_c(audio2,".mp3")
+  ) 
+
+
+similarity_clean <- similarity_sep %>%
+  select(exp_subject_id, audio1, audio2, audio_name, similarity)
+
+
+```

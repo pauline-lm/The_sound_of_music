@@ -1,0 +1,278 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+```{r}
+
+install.packages("plotly")
+install.packages("gplots")
+install.packages("pwr")
+install.packages("ggfortify")
+install.packages("circlize")
+
+
+library(dplyr)
+library(tidyr)
+library(cluster) # for clustering functions
+library(ggplot2) # for plotting (optional)
+library(reshape2)
+library(pheatmap)
+library(reshape2)
+library(plotly)
+library(factoextra)
+library(gplots)
+library(ggcorrplot)
+library(lmerTest)
+library(lme4)
+library(tidyverse)
+library(broom)
+library(pwr)
+#library(adjclust)
+library(ggfortify)
+library(lme4)
+library(lmerTest)
+library(MuMIn)
+library(circlize)
+library(graphics)
+library(emmeans)
+library(knitr)
+
+
+
+```
+
+
+
+Similarity matrix, reported. Darker shade represent higher similarity
+
+```{r}
+
+# Copy the similarity matrix
+modified_matrix <- similarity_matrix2
+
+rownames(modified_matrix) <- colnames(modified_matrix)
+
+# Replace diagonal cells with NA
+diag(modified_matrix) <- NA
+
+# Generate the heatmap with proper NA coloring
+pheatmap(modified_matrix,
+         main = "Heatmap of Similarity Matrix",      # Title of the heatmap
+         color = colorRampPalette(rev(heat.colors(256)))(100), # Continuous color palette
+         cluster_rows = FALSE,                       # Do not cluster rows
+         cluster_cols = FALSE,                       # Do not cluster columns
+         display_numbers = FALSE,                    # Do not display cell values
+         number_color = "black",                     # Text color for cell values
+         fontsize_number = 10,                       # Text size for cell values
+         cellwidth = 9,                              # Cell width
+         cellheight = 9,                             # Cell height
+         legend = TRUE,                              # Show legend
+         na_col = "gray"                             # Set gray for NA cells
+)
+
+
+
+```
+
+
+MM1
+
+```{r}
+MM1_revised <- function(df){
+  #save & remove subj id
+  id <- df[, 1]
+  df <- as.matrix(df[,-1])
+  
+  #Compute means minus one
+  means <- matrix(0, nrow = nrow(df), ncol = ncol(df))
+  for(j in 1:nrow(df)){
+    means[j,] <- colMeans(df[-j,])
+  }
+  
+  #Compute correlations between means minus ones and ones ratings
+  mm1 <- sapply(1:nrow(df), function(.x) cor(df[.x,], means[.x,]))
+  
+  #transform correlations into z scores (r to z Fisher)
+  z_scores <- sapply(mm1, function(x) log((1 + x)/(1 - x))) * .5 
+  
+  #save average correlation (z average to r average Fisher) and correlations per rater
+  result <-  list(MM1 = (exp(2 * (mean(z_scores))) - 1)/(exp( 2 * (mean(z_scores))) + 1), 
+                  raw = data.frame(id, mm1 = mm1, mm1_z = z_scores))
+  result
+}
+
+#######1
+similarity_mm1 <- data %>%
+  filter(!audio_group == "signal") %>%
+  filter(task_name == "Rating") %>%
+  dplyr::select(exp_subject_id, audio_name, similarity) %>%
+  pivot_wider(names_from = audio_name, values_from = similarity)
+
+MM1_similarity <- MM1_revised(similarity_mm1)
+mm1_value1 <- MM1_similarity$MM1
+
+
+#######2
+similarity2_mm1 <- data %>%
+  filter(!audio_group == "signal") %>%
+  filter(task_name == "Rating2") %>%
+  dplyr::select(exp_subject_id, audio_name, similarity) %>%
+  pivot_wider(names_from = audio_name, values_from = similarity)
+
+MM1_similarity2 <- MM1_revised(similarity2_mm1)
+mm1_value2 <- MM1_similarity2$MM1
+
+mm1_value2
+#######3
+similarity3_mm1 <- data %>%
+  filter(!audio_group == "signal") %>%
+  filter(task_name == "Rating3") %>%
+  dplyr::select(exp_subject_id, audio_name, similarity) %>%
+  pivot_wider(names_from = audio_name, values_from = similarity)
+
+MM1_similarity3 <- MM1_revised(similarity3_mm1)
+mm1_value3 <- MM1_similarity3$MM1
+
+
+
+######4
+similarity4_mm1 <- data %>%
+  filter(!audio_group == "signal") %>%
+  filter(task_name == "Rating4") %>%
+  dplyr::select(exp_subject_id, audio_name, similarity) %>%
+  pivot_wider(names_from = audio_name, values_from = similarity)
+
+MM1_similarity4 <- MM1_revised(similarity4_mm1)
+mm1_value4 <- MM1_similarity4$MM1
+
+#####5
+similarity5_mm1 <- data %>%
+  filter(!audio_group == "signal") %>%
+  filter(task_name == "Rating5") %>%
+  dplyr::select(exp_subject_id, audio_name, similarity) %>%
+  pivot_wider(names_from = audio_name, values_from = similarity)
+
+MM1_similarity5 <- MM1_revised(similarity5_mm1)
+mm1_value5 <- MM1_similarity5$MM1
+mm1_value5
+
+##########6
+similarity6_mm1 <- data %>%
+  filter(!audio_group == "signal") %>%
+  filter(task_name == "Rating6") %>%
+  dplyr::select(exp_subject_id, audio_name, similarity) %>%
+  pivot_wider(names_from = audio_name, values_from = similarity)
+
+MM1_similarity6 <- MM1_revised(similarity6_mm1)
+mm1_value6 <- MM1_similarity6$MM1
+
+(mm1_value1 + mm1_value2 + mm1_value3 + mm1_value4 + mm1_value5 + mm1_value6) / 6
+```
+
+Mean Krippendorff's alpha for all 6 conditions, reported
+
+```{r}
+library(irr)
+
+kripp1 <- similarity_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+kripp1 <- as.matrix(kripp1)
+
+kripp1result <- kripp.alpha(kripp1, method = "interval")
+
+
+kripp2 <- similarity2_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+kripp2 <- as.matrix(kripp2)
+
+kripp2result <- kripp.alpha(kripp2, method = "interval")
+
+
+kripp3 <- similarity3_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+kripp3 <- as.matrix(kripp3)
+
+kripp3result <- kripp.alpha(kripp1, method = "interval")
+
+kripp4 <- similarity4_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+kripp4 <- as.matrix(kripp4)
+
+kripp4result <- kripp.alpha(kripp4, method = "interval")
+
+
+kripp5 <- similarity5_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+kripp5 <- as.matrix(kripp5)
+
+kripp5result <- kripp.alpha(kripp5, method = "interval")
+
+
+
+kripp6 <- similarity6_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+kripp6 <- as.matrix(kripp6)
+
+kripp6result <- kripp.alpha(kripp6, method = "interval")
+
+
+(kripp1result$value + kripp2result$value + kripp3result$value + kripp4result$value + kripp5result$value + kripp6result$value) / 6
+
+```
+
+A null model to see how much variance comes from the participants, 30%!
+
+```{r}
+similarity_clean_blocks <- similarity_clean %>%
+  left_join(similarity_desc2 %>%
+              dplyr::select(audio_name, block_name),
+            by = "audio_name")
+similarity_clean_blocks$block_name <- as.factor(similarity_clean_blocks$block_name)
+  
+
+model <- lmer(similarity ~ 1 + (1 | audio_name) + (1 | exp_subject_id), data = similarity_clean_blocks)
+
+summary(model)
+r.squaredGLMM(model)
+car::vif(model) 
+rand(model)
+performance::icc(model, by_group = TRUE)
+
+
+
+```
+
+
+Mean similarity ratings on the y axis, stimuli on the x axis, reported
+
+```{r}
+
+ggplot(similarity_desc2, aes(x = reorder(audio_name, mean_similarity), y = mean_similarity)) +
+  geom_point(size = 0.1) +
+  geom_errorbar(aes(ymin = mean_similarity - se, ymax = mean_similarity + se), width = 0.001) +
+  theme_minimal() +
+  theme(panel.background = element_rect(fill = "white"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_text(size = 20),
+        axis.ticks.x = element_blank(),
+        axis.title.x = element_text(size = 30),
+        axis.title.y = element_text(size = 30),
+        legend.position = "top",
+        legend.text = element_text(size = 15),
+        legend.key.size = unit(1, "cm"),
+        legend.title = element_blank()) +  # Remove legend title
+  labs(x = "Sound Excerpts", y = "Mean Similarity", title = " ") +
+  ylim(0,100)
+```
+
+
+

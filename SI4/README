@@ -1,0 +1,10 @@
+Data and code for SI4
+
+- audio_features: Includes the stimuli, mean feature ratings and clusters.
+- ratings_lme: Rating data from experiment 4.
+- trials_and_sessions: Includes data for the similarity experiment, as downloaded from Labvanced.
+
+The scripts are dependent on each other, run strictly in this order:
+1)	preprocessing
+2)	dataframes
+3)	analysis_paper

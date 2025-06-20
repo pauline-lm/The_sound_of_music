@@ -1,0 +1,12 @@
+Data and code for the SI2
+
+Files that are loaded:
+- all_data_new: The dataframe for the experiment exported from Labvanced.
+- PAGG: Includes stimuli names, kmeans clustering results (PAG), and the proportion of music 
+answers for each stimulus (idkvalues). This was loaded for allowing comparisons between the results from the slider and experiment 1 (2-AFC).
+
+Please run the scripts in this order, they are interdependent, so if you don’t run this in this specific order, certain dataframes might not be found:
+1)	datacleaningslider
+2)	dataframes
+3)	analyses
+4)	plots

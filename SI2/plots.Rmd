@@ -1,0 +1,276 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+library(ggplot2)
+library(reshape2)
+library(corrplot)
+
+```
+
+Plots for showing the correlations between BAIS-V and Gold-MSI and music ratings, not reported
+
+```{r}
+options(scipen = 999)  # Prevents scientific notation
+
+
+correlation_value <- cor(scales$mean_rating, scales$baiss, use = "complete.obs")
+print(correlation_value)
+
+correlation_value2 <- cor(scales$mean_rating, scales$goldd, use = "complete.obs")
+print(correlation_value2)
+
+# Creating the plot
+plot(scales$mean_rating, scales$baiss, pch = 19, col = "lightblue",
+     xlab = "Mean Rating", ylab = "BAIS-V Score")
+
+# Regression line
+abline(lm(scales$baiss ~ scales$mean_rating), col = "red", lwd = 3)
+
+# Pearson correlation
+cor_value <- round(cor(scales$mean_rating, scales$baiss), 2)
+text(x = min(scales$mean_rating), y = max(scales$baiss), 
+     labels = paste("Correlation:", cor_value), pos = 4)
+
+
+# Creating the plot
+plot(scales$mean_rating, scales$goldd, pch = 19, col = "lightblue",
+     xlab = "Mean Rating", ylab = "Gold-MSI Score")
+
+# Regression line
+abline(lm(scales$goldd ~ scales$mean_rating), col = "red", lwd = 3)
+
+# Pearson correlation
+cor_value <- round(cor(scales$mean_rating, scales$goldd), 2)
+text(x = min(scales$mean_rating), y = max(scales$goldd), 
+     labels = paste("Correlation:", cor_value), pos = 4)
+
+```
+
+Gradient plot, the first column represent the ranking of mean ratings at the stimulus level. This shows that even though participants at the group level, there is still some individual variability (reported in SI)
+
+```{r}
+
+# Reshaping the dataframe
+monra_mm1_long <- mm1prepping %>%
+  pivot_longer(
+    cols = -exp_subject_id,  # Keep exp_subject_id, gather other columns
+    names_to = "audio_name",  # The names of the audio columns will go to this new column
+    values_to = "rating"      # The ratings will go to this new column
+  )
+
+# Now pivot wider so that exp_subject_id becomes columns
+monra_mm1_wide <- monra_mm1_long %>%
+  pivot_wider(
+    names_from = exp_subject_id,  # The exp_subject_id values become new columns
+    values_from = rating          # Values come from the rating column
+  )
+
+# Print the reshaped dataframe
+print(monra_mm1_wide)
+
+monra_mean_participants <- monra_mm1_wide %>%
+  left_join(audio_descriptives %>% dplyr::select(audio_name, mean), by = "audio_name") %>%
+  relocate(mean, .after = audio_name)
+
+# Step 1: Reshape the original data to long format for participant ratings
+long_data <- monra_mean_participants %>%
+  pivot_longer(
+    cols = -c(audio_name, mean),  # Exclude non-participant columns
+    names_to = "exp_subject_id", 
+    values_to = "rating"
+  ) %>%
+  group_by(exp_subject_id) %>%
+  arrange(rating, .by_group = TRUE) %>%
+  mutate(rank = row_number())  # Assign rank based on the order of ratings within each participant
+
+# Step 2: Create a long format for mean_monra
+mean_monra_long <- monra_mean_participants %>%
+  dplyr::select(audio_name, mean) %>%
+  mutate(exp_subject_id = "mean", rating = mean) %>%
+  dplyr::select(audio_name, exp_subject_id, rating)
+
+# Step 3: Combine both long formats
+combined_long_data <- bind_rows(long_data, mean_monra_long)
+
+# Step 4: Adjust the participant_id to make mean_monra first
+combined_long_data <- combined_long_data %>%
+  mutate(exp_subject_id = factor(exp_subject_id, levels = c("mean", unique(long_data$exp_subject_id))))  # Ensures mean_monra is first
+
+# Step 5: Rank the combined data
+combined_long_data <- combined_long_data %>%
+  group_by(exp_subject_id) %>%
+  arrange(rating, .by_group = TRUE) %>%
+  mutate(rank = row_number())  # Assign rank for all participants including mean_monra
+  
+# Ensure the data has a gradient variable within each Audio_Name
+combined_long_data <- combined_long_data %>%
+  group_by(audio_name) %>%
+  mutate(gradient_value = scales::rescale(rank))  # Rescale rank for gradient (0 to 1)
+
+# Plot with gradients
+ggplot(combined_long_data, aes(x = exp_subject_id, y = rank, fill = gradient_value)) +
+  geom_tile() +
+  scale_fill_gradientn(
+    colors = c("beige", "red"),   # Gradient for music (modify for other categories)
+    guide = "none"              # Hide legend for the gradient
+  ) +
+  labs(
+    x = "Participants",
+    y = "Ranking of Stimuli",
+    title = " ",
+    fill = "Audio_Name"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_blank(),  # Hide x-axis text labels
+    axis.title.x = element_text(size = 20),
+    axis.text.y = element_blank(),  # Hide y-axis text labels
+    axis.title.y = element_text(size = 20),
+    panel.grid = element_blank(),  # Remove grid lines
+    legend.position = "none"       # Remove legend
+  )
+
+```
+
+
+Correlation matrix of the group (i.e., forced-choice binary versus slider) and individual rankings (n = 95, slider only) of the 90 stimuli under study, reported
+
+```{r}
+
+mm1prepping_2 <- mm1prepping
+
+mm1prepping_3 <- monra_mm1_long %>%
+  pivot_wider(names_from = exp_subject_id, values_from = rating) %>%
+  mutate(New_Names = str_replace(audio_name, '^[MN]_(.+)\\.mp3$', '\\1')) %>%
+  mutate(New_Names = str_to_title(New_Names)) %>%
+  select(New_Names, everything()) %>%
+  select(-audio_name) %>%
+  left_join(
+    audio_descriptives_scaled %>%
+      select(New_Names, Music_answer, mean),
+    join_by(New_Names)
+  ) %>%
+  select(New_Names, Music_answer, mean, everything())
+
+mm1prepping_4 <- monra_mm1_long %>%
+  pivot_wider(names_from = exp_subject_id, values_from = rating) %>%
+  mutate(New_Names = str_replace(audio_name, '^[MN]_(.+)\\.mp3$', '\\1')) %>%
+  mutate(New_Names = str_to_title(New_Names)) %>%
+  select(New_Names, everything()) %>%
+  select(-audio_name) %>%
+  left_join(
+    audio_descriptives %>%
+      select(New_Names, Music_answer, mean),
+    by = "New_Names") %>%
+  select(New_Names, Music_answer, mean, everything()) %>%
+  rename(Slider = mean,
+         Baseline = Music_answer)
+
+
+# Select Music_answer, mean_rating, and all columns that have numeric names (participant ratings)
+selected_columns <- mm1prepping_4 %>%
+  select(Baseline, Slider, matches("^\\d+$"))
+
+# Compute the correlation matrix
+correlation_matrix <- cor(selected_columns, use = "complete.obs", method = "pearson")
+
+# View the correlation matrix
+print(correlation_matrix)
+
+# Reshape the correlation matrix to long format
+melted_correlation_matrix <- melt(correlation_matrix)
+
+# Plot the heatmap using ggplot2
+ggplot(data = melted_correlation_matrix, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(low = "white", high = "red", mid = "green", 
+                       midpoint = 0.5, limit = c(0, 1), space = "Lab", 
+                       name="Correlation") +
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(), # Hide x-axis title
+    axis.title.y = element_blank(), # Hide y-axis title
+    axis.ticks = element_blank(),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),  # Rotate x-axis text to vertical
+    axis.text.y = element_text(angle = 0, vjust = 0.5)# Hide axis ticks
+  ) +
+  coord_fixed() +
+  labs(title = " ")
+
+
+
+ggplot(data = melted_correlation_matrix, aes(x = Var1, y = Var2, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "white", high = "red", mid = "green", 
+    midpoint = 0.5, limit = c(0, 1), space = "Lab", 
+    name = "Correlation"
+  ) +
+  scale_x_discrete(labels = function(x) ifelse(x %in% c("Baseline", "Slider"), x, "")) +  # Show only "baseline" and "slider"
+  scale_y_discrete(labels = function(y) ifelse(y %in% c("Baseline", "Slider"), y, "")) +  # Show only "baseline" and "slider"
+  theme_minimal() +
+  theme(
+    axis.title.x = element_blank(), 
+    axis.title.y = element_blank(),
+    axis.ticks = element_blank(),
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+    axis.text.y = element_text(vjust = 0.5)
+  ) +
+  coord_fixed() +
+  labs(title = " ")
+```
+
+Plot for showing mean music ratings in two studies, reported
+
+```{r}
+
+audio_descriptives_scaled$mean_rating <- audio_descriptives_scaled$mean
+  
+ggplot(audio_descriptives_scaled, aes(x = New_Names, y = mean_rating)) +
+  geom_line(aes(x = reorder(New_Names, Music_answer), y = Music_answer, linetype = "Forced-choice"), group = 1) +  # Add linetype mapping for lines
+  geom_point(size = 2, aes(shape = "Slider")) +  
+  geom_errorbar(aes(ymin = mean - ci, ymax = mean + ci), width = 0.3) +
+  labs(x = "Sound Excerpts", y = "Music Answers") +
+  scale_shape_manual(name = " ", values = c("Slider" = 16), labels = c("Slider")) +  # Customize shape legend
+  scale_linetype_manual(name = " ", values = c("Forced-choice" = "solid"), labels = c("Forced-choice")) +  # Customize linetype legend
+  theme_minimal() +
+  ylim(0, 1) +
+  theme(axis.text.x = element_text(color = "black", angle = 90, vjust = 0.5, size = 10),
+        axis.text.y = element_text(size = 15),
+        axis.title.x = element_text(color = "black", size = 30),
+        axis.title.y = element_text(color = "black", angle = 90, size = 30),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "top")
+
+cor.test(mm1prepping_4$Baseline, mm1prepping_4$Slider, method = "spearman")
+
+```
+
+Raw ratings plotted, with a geom smooth curve, colored by the clusters identified in experiment 1, not reported.
+
+```{r}
+
+ggplot(ratings, aes(x = reorder(audio_name, monra), y = monra, color = as.factor(PAG), group = 1)) +
+  geom_jitter(alpha = 0.4) +
+  geom_smooth(color = "black") +
+  labs(title = " ",
+       x = "Audios",
+       y = "Music or Not Rating",
+       color = "Predetermined Audio Groups") +
+    scale_color_manual(values = c("A" = "blue", "M" = "red", "N" = "green")) +
+  theme_minimal() +
+  theme(axis.text.x = element_text(color = "black", angle = 90, vjust = 0.5, size = 9),
+        axis.title.x = element_text(color = "black", size = 35),
+        axis.title.y = element_text(color = "black", angle = 90, size = 35),
+        axis.text.y = element_text(size = 15),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        legend.position = "none") 
+
+```
+

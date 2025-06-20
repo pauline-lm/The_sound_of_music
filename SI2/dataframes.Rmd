@@ -1,0 +1,198 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+Load libraries
+```{r}
+library(readr)
+library(corrplot)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(tidyverse)
+library(psych)
+library(readxl)
+library(lmerTest)
+library(MuMIn)
+library(factoextra)
+library(simr)
+library(car)
+library(mixedpower)
+library(sjPlot)
+#install.packages("remotes")
+#install.packages("devtools")
+#library(devtools)
+#devtools::install_github("dustinfife/flexplot", ref="development")
+#library(flexplot)install.packages("hrbrthemes")  
+#library(hrbrthemes)
+```
+
+We read in the data
+
+```{r}
+
+clean_data <- read_excel("clean_data.xlsx", 
+    sheet = "Sheet1")
+
+PAGG <- read_excel("PAGG.xlsx", 
+    sheet = "Sheet1")
+
+clean_data <- clean_data %>%
+
+  mutate(audio_group = case_when(
+
+    startsWith(audio_name, "M_") ~ "music",
+
+    startsWith(audio_name, "N_") ~ "non-music",
+
+    startsWith(audio_name, "SIGNAL_") ~ "signal",
+
+    TRUE ~ NA_character_
+
+  ))
+
+```
+
+
+First I come up with the df called datanew, and have a more structured and clean table there with ratings and questionnaires
+
+```{r}
+
+datanew <- select(clean_data, exp_subject_id, task_name, audio_name, audio_group, monra, ae_01, ae_02, ae_05, ae_07, bais_v_01, bais_v_02, bais_v_03, bais_v_04, bais_v_05, bais_v_06, bais_v_07, bais_v_08, bais_v_09, bais_v_10, bais_v_11, bais_v_12, bais_v_13, bais_v_14, mt_01, mt_02, mt_03, mt_06, mt_07, pa_04, pa_08, sa_01, sa_02, sa_03, sa_04, sa_05, sa_06, em_04)
+
+```
+
+
+Filter only categorization task and then filter out the signal sounds
+```{r}
+
+monra_data <- datanew %>%
+  filter(task_name %in% c("Categorization")) %>%
+  filter(audio_group %in% c("music", "non-music"))
+
+```
+
+Merge Pauline's data with this, because she has the audio clusters (A,M,N) (for future comparisons) 
+
+```{r}
+
+monra_data <- merge(monra_data, PAGG, by = "audio_name")
+
+##DF WITH JUST RATINGS
+
+ratings <- select(monra_data, exp_subject_id, audio_name, monra, audio_group, PAG)
+
+```
+
+
+Sd and the means of music ratings
+```{r}
+
+audio_descriptives <- ratings %>%
+                          group_by(audio_name) %>%
+                          summarize(sd = sd(monra, na.rm = TRUE),
+                                    mean = mean(monra, na.rm = TRUE),
+                                    ci = qt(0.95, length(monra) - 1) * sd(monra) / sqrt(length(monra)))
+
+audio_descriptives <- audio_descriptives %>%
+  mutate(Audio_Group = case_when(
+    grepl("M_", audio_name) ~ "M",
+    grepl("N_", audio_name) ~ "N",
+    grepl("SIGNAL_", audio_name) ~ "SIGNAL",
+    TRUE ~ "Other"  # If no match, assign "Other" or handle as needed
+  ))
+audio_descriptives <- merge(audio_descriptives, PAGG, by = "audio_name", all.x = TRUE)
+audio_descriptives <- audio_descriptives %>%
+  mutate(New_Names = str_replace(audio_name, '^[MN]_(.+)\\.mp3$', '\\1')) %>%
+  mutate(New_Names = str_to_title(New_Names)) 
+audio_descriptives$Music_answer <- as.numeric(audio_descriptives$Music_answer)
+str(audio_descriptives)
+
+
+#Scaled, but since participants rated everything on a slider, we won't be using these
+
+ratings_scaled <- ratings
+ratings_scaled$monra_scaled <- (ratings_scaled$monra - min(ratings_scaled$monra)) / (max(ratings_scaled$monra) - min(ratings_scaled$monra))
+
+audio_descriptives_scaled <- ratings_scaled %>%
+                          group_by(audio_name) %>%
+                          summarize(sd = sd(monra_scaled, na.rm = TRUE),
+                                    mean = mean(monra_scaled, na.rm = TRUE),
+                                    ci = qt(0.95, length(monra_scaled) - 1) * sd(monra_scaled) / sqrt(length(monra_scaled)))
+
+audio_descriptives_scaled <- audio_descriptives_scaled %>%
+  mutate(New_Names = str_replace(audio_name, '^[MN]_(.+)\\.mp3$', '\\1')) %>%
+  mutate(New_Names = str_to_title(New_Names)) 
+audio_descriptives_scaled <- merge(audio_descriptives_scaled, PAGG, by = "audio_name", all.x = TRUE)
+
+audio_descriptives_scaled$Music_answer <- as.numeric(audio_descriptives_scaled$Music_answer)
+str(audio_descriptives)
+
+
+
+```
+
+
+Calculate Gold-MSI
+```{r}
+
+gold <- select(clean_data, exp_subject_id, ae_01, ae_02, ae_05, ae_07, mt_01, mt_02, mt_03, mt_06, mt_07, pa_04, pa_08, sa_01, sa_02, sa_03, sa_04, sa_05, sa_06, em_04)
+
+goldd <- aggregated_data <- aggregate(. ~ exp_subject_id, data = gold, FUN = function(x) x[!is.na(x)][1])
+
+
+gold2<-select(goldd, ! exp_subject_id)
+
+keys_gold <- c("SA_05", "SA_04", "MT_03", "MT_07", "PA_08")
+rec <-  psych::reverse.code(keys = keys_gold, items = gold2, mini = 1, maxi = 7) 
+# View(rec)
+rec <- as.data.frame(rec)
+
+#GM_sum 
+rec$goldd=rowSums(cbind(rec$ae_01,rec$ae_02,rec$ae_05,rec$ae_07,rec$em_04,rec$mt_01,rec$mt_02,rec$`mt_03-`,rec$mt_06,rec$`mt_07-`,rec$pa_04,rec$`pa_08-`,rec$sa_01,rec$sa_02,rec$sa_03,rec$`sa_04-`,rec$`sa_05-`,rec$sa_06))
+
+rec$exp_subject_id <- goldd$exp_subject_id
+gold_score <- select(rec, exp_subject_id, goldd)
+view(gold_score)
+```
+
+
+Calculate BAIS-V
+```{r}
+
+bais <- select(clean_data, bais_v_01, bais_v_02, bais_v_03, bais_v_04, bais_v_05, bais_v_06, bais_v_07, bais_v_08, bais_v_09, bais_v_10, bais_v_11, bais_v_12, bais_v_13, bais_v_14)
+
+baiss <- na.omit(bais)
+rec <- as.data.frame(baiss)
+
+#Mean_score
+rec$baiss=rowMeans(cbind(rec$bais_v_01,rec$bais_v_02,rec$bais_v_03,rec$bais_v_04,rec$bais_v_05,rec$bais_v_06,rec$bais_v_07,rec$bais_v_08,rec$bais_v_09,rec$bais_v_10,rec$bais_v_11,rec$bais_v_12,rec$bais_v_13,rec$bais_v_14))
+
+BAIS_score<-select(rec,baiss)
+BAIS_score <- cbind(BAIS_score, demo_data_clean$exp_subject_id)
+colnames(BAIS_score)[colnames(BAIS_score) == "demo_data_clean$exp_subject_id"] <- "exp_subject_id"
+
+
+scales <-merge(gold_score,BAIS_score, by = "exp_subject_id")
+
+```
+
+
+Calculate the avg. rating of each participant
+```{r}
+participant_means <- ratings %>%
+  group_by(exp_subject_id) %>%
+  summarize(mean_rating = mean(monra, na.rm = TRUE))
+```
+
+
+Put the average rating for each participant to the scales df
+```{r}
+
+scales <- merge(scales, participant_means, by = "exp_subject_id")
+
+```
+
+

@@ -1,0 +1,186 @@
+Here is another notebook for data analyses
+
+```{r}
+library(MuMIn)
+library(readr)
+library(corrplot)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(tidyverse)
+library(psych)
+library(readxl)
+library(lmerTest)
+library(MuMIn)
+library(factoextra)
+library(simr)
+library(car)
+library(sjPlot)
+```
+
+Demographics (mean age, sd age)
+
+```{r}
+demo_data_clean %>%
+  summarize(mean(age),
+            sd(age))
+```
+
+
+
+MM1 PREP DF
+```{r}
+
+# PREPARE A DF FOR MM1 Assuming your data frame is named mm1prep
+mm1prepping <- ratings %>%
+  select(exp_subject_id, audio_name, monra) %>%
+  pivot_wider(names_from = audio_name, values_from = monra)
+
+```
+
+
+Calculate MM1 Values
+```{r}
+
+MM1_revised <- function(df){
+  #save & remove subj id
+  id <- df[, 1]
+  df <- as.matrix(df[,-1])
+  
+  #Compute means minus one
+  means <- matrix(0, nrow = nrow(df), ncol = ncol(df))
+  for(j in 1:nrow(df)){
+    means[j,] <- colMeans(df[-j,])
+  }
+  
+  #Compute correlations between means minus ones and ones ratings
+  mm1 <- sapply(1:nrow(df), function(.x) cor(df[.x,], means[.x,]))
+  
+  #transform correlations into z scores (r to z Fisher)
+  z_scores <- sapply(mm1, function(x) log((1 + x)/(1 - x))) * .5 
+  
+  #save average correlation (z average to r average Fisher) and correlations per rater
+  result <-  list(MM1 = (exp(2 * (mean(z_scores))) - 1)/(exp( 2 * (mean(z_scores))) + 1), 
+                  raw = data.frame(id, mm1 = mm1, mm1_z = z_scores))
+  result
+}
+
+#I wanted to see the MM1 list pls
+MM1_List <- MM1_revised(mm1prepping)
+MM1_L <- as.data.frame(MM1_List$raw)
+MM1_List
+MM1_List$MM1
+```
+
+
+What is the mean of all monra ratings across 9000 trials
+```{r}
+monra_data %>%
+  summarize(mean(monra))
+```
+
+What is the mean rating of stimuli that are rated as music
+```{r}
+# Calculate the mean of 'monra' for 'PAG' M
+mean_monra_M <- mean(ratings$monra[ratings$PAG == 'M'], na.rm = TRUE)
+
+# Calculate the mean of 'monra' for 'PAG' A
+mean_monra_A <- mean(ratings$monra[ratings$PAG == 'A'], na.rm = TRUE)
+
+# Calculate the mean of 'monra' for 'PAG' N
+mean_monra_N <- mean(ratings$monra[ratings$PAG == 'N'], na.rm = TRUE)
+
+print(mean_monra_M)
+print(mean_monra_A)
+print(mean_monra_N)
+```
+
+
+Now let's do a Linear Mixed Model,  by using PAG as fixed effects and audio names and participants as random
+```{r}
+# Fit a mixed-effects model
+model <- lmer(monra ~ PAG + (1|exp_subject_id) + (1 | audio_name), data = ratings)
+
+# View the summary of the model
+summary(model)
+anova_results <- anova(model)
+r.squaredGLMM(model)
+```
+
+
+
+We'll try to calculate what is the best number of clusters for this dataset,
+We do this by using the Elbow Method
+
+```{r}
+# Look at clusters with a defined number of clusters
+kmm = kmeans(audio_descriptives$mean,3,nstart = 50,iter.max = 15) #we keep number of iter.max=15 to ensure the algorithm converges and nstart=50 to #ensure that atleat 50 random sets are choosen  
+kmm
+
+## Methods 1: Elbow Method for finding the optimal number of clusters
+set.seed(123)
+# Compute and plot wss for k = 2 to k = 15.
+k.max <- 15
+data_for_kmm <- audio_descriptives$mean
+wss <- sapply(1:k.max, 
+              function(k){kmeans(data_for_kmm, k, nstart=50,iter.max = 15 )$tot.withinss})
+wss
+plot(1:k.max, wss,
+     type="b", pch = 19, frame = FALSE, 
+     xlab="Number of clusters K",
+     ylab="Total within-clusters sum of squares")
+
+```
+As observed here, 3 seems to be a valid option here.
+
+```{r}
+
+slider_long <- ratings %>%
+  select(exp_subject_id, audio_name, monra) %>%
+  mutate(condition = "slider",
+         monra = ifelse(monra >= 50, 1, 0))
+
+##this is the data from experiment 1
+
+fcself <- read_excel("preprocessed_data_all.xlsx", 
+    sheet = "Figures_self")
+
+afc_slider <- fcself %>%
+  rename(exp_subject_id = Participant,
+         monra = Music_answer,
+         audio_name = Stim) %>%
+  select(exp_subject_id, 
+         audio_name, monra) %>%
+  mutate(condition = "afc") %>%
+  bind_rows(slider_long)
+
+afc_slider$monra <- as.numeric(afc_slider$monra)
+afc_slider$condition <- as.factor(afc_slider$condition)
+afc_slider$condition <- factor(afc_slider$condition, levels = c("slider", "afc"))
+str(afc_slider)
+
+library(emmeans)
+
+# Fit a mixed-effects model
+model_comp <- glmer(monra ~ condition + (1 |exp_subject_id) + (1 | audio_name), data = afc_slider, family = "binomial")
+
+summary(model_comp)
+r.squaredGLMM(model_comp)
+performance::icc(model_comp, by_group = TRUE)
+
+
+
+```
+
+Correlation between the two conditions
+
+```{r}
+afc_slider
+
+audio_descriptives_scaled$mean <- as.numeric(audio_descriptives_scaled$mean)
+PAGG$Music_answer <- as.numeric(PAGG$Music_answer)
+
+cor.test(audio_descriptives_scaled$mean, PAGG$Music_answer)
+
+```
+

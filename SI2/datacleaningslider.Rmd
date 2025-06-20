@@ -1,0 +1,178 @@
+R script to exclude participants who failed the attention check, or did not complete the study
+
+```{r}
+
+library(dplyr)
+library(tibble)
+library(writexl)
+library(janitor)
+library(readxl)
+```
+
+Load the data
+
+```{r}
+
+untouched_data <- read_xlsx("all_data_new.xlsx",
+                  sheet = "all_data_new")
+
+data <- read_xlsx("all_data_new.xlsx",
+                  sheet = "all_data_new")
+
+data <- janitor::clean_names(data)
+
+data <- data %>%
+  rename(monra = musicornot)
+
+data %>%
+  distinct(exp_subject_id) #120
+
+data %>%
+  distinct(prolific_id) #113 + (na)
+```
+
+
+2 PAIRS (797627,797719 AND 797633,797684) HAVE THE SAME PROLIFIC ID,THAT'S WHERE THE INCONSISTENCY COMES FROM 
+
+```{r}
+data %>%
+  filter(task_name == "Instructions") %>%
+  distinct(exp_subject_id, prolific_id)
+
+```
+
+
+
+Come up with audio groups as categorization
+
+```{r}
+
+data <- data %>%
+
+  mutate(categorization = case_when(
+
+    startsWith(audio_name, "M_") ~ "music",
+
+    startsWith(audio_name, "N_") ~ "not_music",
+
+    startsWith(audio_name, "SIGNAL_") ~ "signal",
+
+    TRUE ~ NA_character_
+
+  ))
+
+
+
+```
+
+ 
+```{r}
+
+prolific_id <- data %>%
+  filter(task_name == "Instructions") %>%
+  select(exp_subject_id, prolific_id)
+
+demo_data_everyone <- data %>% 
+  filter(task_name == "Demographic_data") %>% 
+  dplyr::select(exp_subject_id, age, gender, hearing_impairments,
+         browser_spec, completed, crowdsourcing_code, crowdsourcing_subj_id, start_time, start_time_local, end_time, end_time_local, 
+         session_nr, session_token, group_nr) %>%
+  left_join(prolific_id %>%
+              select(exp_subject_id, prolific_id),
+            by = "exp_subject_id")
+
+demo_data_clean <- demo_data_everyone
+
+
+```
+
+Filtering out participants who didn't complete, who had hearing impairments, who didn't consent
+ 
+```{r}
+
+incomplete <- data %>%
+  filter(completed != TRUE) %>% 
+  dplyr::select(exp_subject_id) %>% 
+  distinct(exp_subject_id) %>%
+  deframe()
+incomplete
+
+# Now drop incomplete datasets
+
+data <- data %>% filter(!exp_subject_id %in% incomplete)
+demo_data_clean <- demo_data_clean %>% filter(!exp_subject_id %in% incomplete)
+
+# Exclude participants that did not consent
+no_consent <- data %>% 
+  filter(task_name == "Informed_consent" & informed_consent != TRUE) %>% 
+  dplyr::select(exp_subject_id) %>% 
+  distinct(exp_subject_id) %>%
+  deframe()
+no_consent
+
+
+data <- data %>% filter(!exp_subject_id %in% no_consent)
+demo_data_clean <- demo_data_clean %>% filter(!exp_subject_id %in% no_consent)
+
+
+# Exclude participants that have hearing impairments
+hearing_impairement <- data %>%
+  filter(task_name == "Demographic_data" & hearing_impairments != "No") %>% 
+  dplyr::select(exp_subject_id) %>% 
+  distinct(exp_subject_id) %>%
+  deframe()
+hearing_impairement
+
+
+data <- data %>% filter(!exp_subject_id %in% hearing_impairement)
+demo_data_clean <- demo_data_clean %>% filter(!exp_subject_id %in% hearing_impairement)
+
+
+
+```
+ 
+
+Compute the mean monra for all the participants, make it appear as a seperate column. Come up with bark_data 2 where you have 1 row for every participant and columns for their participant ID, mean monra and their completion status. PROLIFIC ID WILL BE ADDED
+
+```{r}
+
+
+bark_data <- filter(data, categorization %in% c("signal"))
+
+bark_data2 <- bark_data %>%
+  group_by(exp_subject_id) %>%
+   summarise(
+    mean_monra = mean(monra, na.rm = TRUE))
+
+demo_data_everyone <- merge(bark_data2, demo_data_everyone, by = "exp_subject_id")
+demo_data_clean <- merge(bark_data2, demo_data_clean, by = "exp_subject_id")
+
+
+no_attention <- bark_data2 %>% 
+  group_by(exp_subject_id) %>% 
+  filter(mean_monra < 80) %>% 
+  dplyr::select(exp_subject_id) %>% 
+  deframe()
+no_attention
+
+data <- data %>% filter(!exp_subject_id %in% no_attention)
+demo_data_clean <- demo_data_clean %>% filter(!exp_subject_id %in% no_attention)
+
+no_attention
+hearing_impairement
+incomplete
+no_consent
+
+write_xlsx(data, "clean_data.xlsx")
+
+
+data %>%
+  filter(task_name == "Instructions") %>%
+  distinct(exp_subject_id, prolific_id) ##95
+
+
+
+```
+
+
+

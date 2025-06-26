@@ -1,0 +1,2729 @@
+---
+title: "Is it music?"
+author: "Pauline Larrouy-Maestri (Exp 1-3) & T. Ata Aydin (Exp 4)"
+output:
+  html_document:
+    df_print: paged
+editor_options:
+  chunk_output_type: inline
+---
+
+### Experiment 1
+
+Analysis of the Music data collected in September 2022
+
+Following the preregistration: Larrouy-Maestri, P., & Wald-Fuhrmann, M. (2022, September 12).
+Definition of music: Effect of self- vs others-reference in the identification of auditory stimuli as music or not.
+Retrieved from osf.io/sb24q
+
+Clear and load
+```{r}
+rm(list = ls())
+
+# Load libraries
+library(ggplot2)
+library(GGally)
+library(readxl)
+library(dplyr)
+library(lme4)
+library(glm2)
+library(ez)
+library(stats)
+library(lme4)
+library(lmerTest)
+library(corrplot)
+library(ggcorrplot)
+library(tidyverse)
+library(hrbrthemes)
+library(viridisLite)
+library(viridis)
+library(broom)
+library(broom.mixed)
+library(performance)
+library(ordinal)
+library(gridExtra)
+library(Hmisc)
+library(mclust)
+library(NbClust)
+library(ape)
+library(vcd)
+library(grid)
+
+# Select data
+Alldata <- read_excel("Exp_1.xlsx", sheet = "Reg_Analysis_1")
+Selfdata <- subset(Alldata, Alldata$Condition == "self")
+Otherdata <- subset(Alldata, Alldata$Condition == "other")
+
+```
+
+Rescale the Confidence ratings(0-3 instead of 1-4) to match the intention and the methods
+
+```{r}
+# Create a new column 'confidence_rescaled' that is a copy of 'Confidence'
+Alldata$confidence_rescaled <- Alldata$Confidence
+
+# Rescale 'confidence_rescaled' for all data
+Alldata$confidence_rescaled<- Alldata$confidence_rescaled - 1
+```
+
+ANALYSIS 1: Effect of Condition (self versus other) on the categorisation of stimuli
+
+Mixed effects logistic regression will be applied to predict the response (i.e., "Music" or "Not music") from the condition, with random intercepts for participants and stimuli items.
+
+NOTE that the syntax in the registration included the "a priori" condition but is not presented in the paper (only mentioned as a footnote)
+Proposed tentative syntax (in the registration): Music_answer ~ a priori group + Condition + a priori group:Condition + (1|Participant) + (1|Stim)
+
+Code to change the baseline of the factors (self) for the model
+```{r}
+Alldata$Condition <- as.factor(Alldata$Condition)
+Alldata$Condition <- relevel(Alldata$Condition, ref = "self")
+```
+
+Null and simplest model, including only Condition:
+```{r}
+Effect_null <- glmer(data = Alldata, Music_answer ~ 1 + (1|Participant) + (1|Stim), family = binomial)
+summary(Effect_null)
+
+Effect_log <- glmer(data = Alldata, Music_answer ~ Condition + (1|Participant) + (1|Stim), family = binomial)
+summary(Effect_log)
+
+anova(Effect_null,Effect_log)
+```
+
+Details about the full model
+```{r}
+tidy (Effect_log)
+performance(Effect_log)
+```
+
+ICC for the random effects (all together and separately)
+```{r}
+# ICC calculation by group
+icc_results_group <- performance::icc(Effect_log, by_group = TRUE)
+print(icc_results_group)
+
+# ICC calculation for all random
+icc_results_all <- performance::icc(Effect_log, by_group = FALSE)
+print(icc_results_all)
+```
+
+ANALYSIS 1bis: Effect of condition (Condition: self versus other) on the confidence ratings (confidence as ordinal variable)
+```{r}
+conf_ord_r <- mutate(Alldata, confidence_rescaled = factor(confidence_rescaled, levels=0:3, ordered=TRUE))
+conf_ord_r <- mutate(Alldata, Condition = factor(Condition, ordered=FALSE))
+
+# Check the class and levels of the 'Confidence' variable
+class(conf_ord_r$confidence_rescaled)
+levels(conf_ord_r$confidence_rescaled)
+
+# Convert 'Confidence' to factor if it's not already
+conf_ord_r$confidence_rescaled <- factor(conf_ord_r$confidence_rescaled, ordered = TRUE)
+
+# Check the class and levels again
+class(conf_ord_r$confidence_rescaled)
+levels(conf_ord_r$confidence_rescaled)
+
+# Fit the CLMM model without the effect of Condition
+Effect_Conf_null_r <- clmm(confidence_rescaled ~ 1 + (1|Participant) + (1|Stim), data = conf_ord_r, link = "probit", threshold = "equidistant")
+summary(Effect_Conf_null_r)
+
+# Fit the CLMM model with the effect of Condition
+model_conf_ord_r <- clmm(confidence_rescaled ~ Condition + (1 | Participant) + (1 | Stim), data = conf_ord_r, link = "probit", threshold = "equidistant")
+summary(model_conf_ord_r)
+
+# Comparison of the null and full model for confidence
+anova(Effect_Conf_null_r,model_conf_ord_r)
+
+# ICC calculation by group (i.e., each random effects) for the NULL model (since the full model is not better)
+icc_results_group <- performance::icc(Effect_Conf_null_r, by_group = TRUE)
+print(icc_results_group)
+
+# ICC calculation for all random effects together for the NULL model (since the full model is not better)
+icc_results_all <- performance::icc(Effect_Conf_null_r, by_group = FALSE)
+print(icc_results_all)
+
+```
+
+### Figure 1A
+
+```{r}
+# Compute mean music responses and mean confidence ratings
+DataPlot <- with(Alldata, aggregate(cbind(Music_answer, confidence_rescaled), list(Stimuli=Stim, Condition = Condition), mean))
+DataPlot
+```
+
+
+Setting colors for the plots
+
+```{r}
+
+self = "orange"
+other = "purple"
+
+Condition_colors = c(self,other)
+```
+
+
+Plotting the music answers with 2 contrasted colors (Conditions: 1st and 3rd person, also names Self and Other conditions), with order according to the Self values
+
+```{r}
+# Calculate the mean Music_answer for each stimulus in the "self" condition
+self_means <- with(subset(Alldata, Condition == "self"), 
+                   tapply(Music_answer, Stim, mean, na.rm = TRUE))
+
+# Ensure the Music_answer column is numeric
+DataPlot$Music_answer <- as.numeric(DataPlot$Music_answer)
+
+# Reorder the Stimuli factor levels based on the means in the "self" condition
+DataPlot$Stimuli <- factor(DataPlot$Stimuli, 
+                           levels = names(sort(self_means, decreasing = FALSE)))
+
+# Reorder the levels of the Condition factor
+DataPlot$Condition <- factor(DataPlot$Condition, levels = c("self", "other"))
+
+ResponsePlot <- ggplot(DataPlot, aes(x = reorder(Stimuli, Music_answer), y = Music_answer, group = Condition, colour = Condition)) +
+  geom_point(aes(shape = Condition), size = 3.5) +
+  scale_colour_manual(values = Condition_colors, 
+                      labels = c("1st person", "3rd person")) +  # Rename Condition labels
+  scale_shape_manual(values = c("self" = 16,   # Solid circle
+                                "other" = 1),   # Hollow circle
+                     labels = c("1st person", "3rd person")) +
+  theme_classic() +
+  xlab("Stimuli (n = 90)") +
+  ylab("Music responses") +
+  theme(axis.text.x = element_blank(),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(size = 10),
+        legend.position = c(0.8, 0.4),
+        axis.title.y = element_text(size = 14),
+        axis.title.x = element_text(size = 12),
+        panel.background = element_rect(fill = "white"))  # Ensure white background
+
+ResponsePlot
+
+```
+
+Plotting Confidence for self and other conditions
+
+```{r}
+# Reorder the Stimuli factor levels based on the means in the "self" condition
+DataPlot$Stimuli <- factor(DataPlot$Stimuli, 
+                           levels = names(sort(self_means, decreasing = FALSE)))
+
+# Reorder the levels of the Condition factor
+DataPlot$Condition <- factor(DataPlot$Condition, levels = c("self", "other"))
+
+ResponsePlot_conf <- ggplot(DataPlot, aes(x = reorder(Stimuli, Music_answer), y = confidence_rescaled, group = Condition, colour = Condition)) +
+  geom_point(aes(shape = Condition), size = 3.5) +  # Adjust size for circles
+  scale_colour_manual(values = Condition_colors, 
+                      labels = c("1st person", "3rd person")) +  # Rename Condition labels
+  scale_shape_manual(values = c("self" = 16,   # Solid circle for "self"
+                                "other" = 1),   # Hollow circle for "other"
+                     labels = c("1st person", "3rd person")) +
+  theme_classic() +
+  xlab("Stimuli (n = 90)") +
+  ylab("Confidence") +
+  ylim(1.3, 3) +  # Adjust y-axis limits as needed
+  theme(axis.text.x = element_blank(), 
+        legend.text = element_text(size = 12), # Change legend text font size
+        legend.title = element_text(size = 12), # Change legend title font size
+        legend.position = "none",  # Remove the legend
+        axis.title.y = element_text(size = 14),
+        axis.title.x = element_text(size = 12)) +
+  theme(panel.background = element_rect(fill = "white"))
+
+ResponsePlot_conf
+
+
+```
+
+Combine plots Identification/Confidence and save
+```{r}
+
+Figure_1 <- grid.arrange(ResponsePlot,ResponsePlot_conf,ncol = 1)
+ggsave("~/Desktop/ResponsePlot_exp1.tiff", plot = Figure_1, width = 5, height = 5, dpi = 600, device = "tiff", compression = "lzw")
+
+```
+
+### Experiment 2
+
+Analysis of the Music data collected in November 2022
+
+Following the preregistration: Larrouy-Maestri, P., & Wald-Fuhrmann, M. (2022, November 21).
+Perception of sounds as music or not: effect of stimulus duration
+Retrieved from osf.io/azkcp
+
+Clear and load
+
+```{r}
+rm(list = ls())
+
+# Load data
+Alldata <- read_excel("Exp_2.xlsx", sheet = "Categorisation_to_analyse")
+data2<- subset(Alldata, Alldata$Duration == "2")
+data5 <- subset(Alldata, Alldata$Duration == "5")
+data10 <- subset(Alldata, Alldata$Duration == "10")
+
+a_priori_exp1 <-as.numeric(Alldata$a_priori_exp1_label)
+Duration <-as.factor(Alldata$Duration)
+
+```
+
+
+Rescale the Confidence ratings for duration short and long (0-3 instead of 1-4) to match the intention, the methods, and the date of the medium duration (i.e., data of Exp1, self)
+
+```{r}
+# Create a new column 'confidence_rescaled' that is a copy of 'confidence'
+Alldata$confidence_rescaled <- Alldata$confidence
+
+# Rescale 'confidence_rescaled' for Duration values 2 and 9
+Alldata$confidence_rescaled[Alldata$Duration_label %in% c("short", "long")] <- Alldata$confidence_rescaled[Alldata$Duration_label %in% c("short", "long")] - 1
+
+# Optional: Verify the changes
+# You can check a subset of the data to ensure the changes are correct
+head(Alldata[Alldata$Duration_label %in% c("short", "long"), c("Duration_label", "confidence", "confidence_rescaled")])
+
+```
+
+ANALYSIS 1: Effect of duration (2 versus 5 versus 10) on the categorisation of stimuli
+
+Mixed effects logistic regression will be applied to predict the response (i.e., "Music" or "Not music") from the condition (i.e., duration: 2, 5, 10 seconds), with random intercepts for participants and stimuli items.
+
+NOTE that we don't use the results of Exp1 (3 groups:music, no_music, ambiguous) since we reuse the data of the "self" group from which the three groups were defined
+
+NOTE that the syntax in the registration included the "a priori" condition but is not presented in the paper (only mentioned as a footnote)
+Proposed tentative syntax (in the registration): Music_answer ~ a priori group + Duration + a priori group:Duration + (1|exp_subject_id) + (1|stim_name)
+
+
+Code to change the baseline of the factors (Duration_label) for the model
+```{r}
+Alldata$Duration_label <- as.factor(Alldata$Duration_label)
+Alldata$Duration_label <- relevel(Alldata$Duration_label, ref = "medium")
+```
+
+Null and simplest model, including only duration:
+```{r}
+Effect_null <- glmer(data = Alldata, Music_answer ~ 1 + (1|exp_subject_id) + (1|stim_name), family = binomial)
+summary(Effect_null)
+
+Effect_log <- glmer(data = Alldata, Music_answer ~ Duration_label + (1|exp_subject_id) + (1|stim_name), family = binomial)
+summary(Effect_log)
+
+anova(Effect_null,Effect_log)
+```
+
+Details about the full model
+```{r}
+tidy (Effect_log)
+performance(Effect_log)
+```
+ICC for the random effects (all together and separately)
+```{r}
+# ICC calculation by group
+icc_results_group <- performance::icc(Effect_log, by_group = TRUE)
+print(icc_results_group)
+
+# ICC calculation for all random
+icc_results_all <- performance::icc(Effect_log, by_group = FALSE)
+print(icc_results_all)
+```
+
+ANALYSIS 1bis: Effect of condition (duration: short, medium, long) on the confidence ratings (confidence as ordinal variable)
+```{r}
+conf_ord_r <- mutate(Alldata, confidence_rescaled = factor(confidence_rescaled, levels=0:3, ordered=TRUE))
+conf_ord_r <- mutate(Alldata, Condition = factor(Duration_label, ordered=FALSE))
+
+# Check the class and levels of the 'Confidence' variable
+class(conf_ord_r$confidence_rescaled)
+levels(conf_ord_r$confidence_rescaled)
+
+# Convert 'Confidence' to factor if it's not already
+conf_ord_r$confidence_rescaled <- factor(conf_ord_r$confidence_rescaled, ordered = TRUE)
+
+# Check the class and levels again
+class(conf_ord_r$confidence_rescaled)
+levels(conf_ord_r$confidence_rescaled)
+
+# Fit the CLMM model without the effect of Condition
+Effect_Conf_null_r <- clmm(confidence_rescaled ~ 1 + (1|exp_subject_id) + (1|stim_name), data = conf_ord_r, link = "probit", threshold = "equidistant")
+summary(Effect_Conf_null_r)
+
+# Fit the CLMM model with the effect of Condition
+model_conf_ord_r <- clmm(confidence_rescaled ~ Duration_label + (1 | exp_subject_id) + (1 | stim_name), data = conf_ord_r, link = "probit", threshold = "equidistant")
+summary(model_conf_ord_r)
+
+# Comparison of the null and full model for confidence
+anova(Effect_Conf_null_r,model_conf_ord_r)
+
+# ICC calculation by group (i.e., each random effects) for the NULL model (since the full model is not better)
+icc_results_group <- performance::icc(Effect_Conf_null_r, by_group = TRUE)
+print(icc_results_group)
+
+# ICC calculation for all random effects together for the NULL model (since the full model is not better)
+icc_results_all <- performance::icc(Effect_Conf_null_r, by_group = FALSE)
+print(icc_results_all)
+
+```
+
+
+### Figure 1B
+
+```{r}
+# Compute mean music responses and mean confidence ratings
+DataPlot <- with(Alldata, aggregate(Music_answer, list(Stimuli=stim_name,Condition=Duration_label), mean))
+```
+
+Setting colors for the plots
+
+```{r}
+s = "gold"
+m = "orange"
+l = "brown"
+
+dur_colors = c(s,m,l)
+```
+
+Plotting the music answers with 3 colors (Conditions: Short, Medium, and Long stimuli)
+```{r}
+DataPlot <- with(Alldata, aggregate(Music_answer, list(Stimuli=stim_name,Condition=Duration_label), mean))
+
+# Reorder the levels of the Condition factor
+DataPlot$Condition <- factor(DataPlot$Condition, levels = c("short", "medium", "long"))
+
+# Create the plot with the reordered Condition levels
+ResponsePlot <- ggplot(DataPlot, aes(x = reorder(Stimuli, x), y = x, group = Condition, colour = Condition)) +
+  geom_point(aes(shape = Condition), size = 3.5) +
+  scale_colour_manual(values = dur_colors,
+                      labels = c("Short", "Medium", "Long")) +
+  scale_shape_manual(values = c("short" = 1,   # Solid circle
+                                 "medium" = 16,
+                                 "long"= 1),   # Hollow circle
+                     labels = c("Short", "Medium", "Long")) +
+  theme_classic() +
+  xlab("Stimuli (n = 75)") +
+  ylab("Music responses") +
+  theme(axis.text.x = element_blank(), 
+        legend.text = element_text(size = 10), 
+        legend.title = element_text(size = 10), 
+        legend.position = c(0.8, 0.4),
+        axis.title.y = element_text(size = 14),
+        axis.title.x = element_text(size = 12)) +
+  theme(panel.background = element_rect(fill = "white"))
+
+ResponsePlot
+
+```
+
+Plotting Confidence for Short, Medium, and Long stimuli
+
+```{r}
+# Compute mean music responses and mean confidence ratings
+DataPlot <- with(Alldata, aggregate(cbind(Music_answer, confidence_rescaled), list(Stimuli=stim_name, Condition = Duration_label), mean))
+DataPlot
+
+# Reorder the levels of the Condition factor
+DataPlot$Condition <- factor(DataPlot$Condition, levels = c("short", "medium", "long"))
+
+# Plot confidence like for identification
+ResponsePlot_conf <- ggplot(DataPlot, aes(x = reorder(Stimuli, Music_answer), y = confidence_rescaled, group = Condition, colour = Condition)) +
+  geom_point(aes(shape = Condition), size = 3.5) +
+  scale_colour_manual(values = dur_colors,
+                      labels = c("Short", "Medium", "Long")) +
+  scale_shape_manual(values = c("short" = 1,   # Hollow circle
+                                 "medium" = 16, # Solid circle
+                                 "long"= 1),   # Hollow circle
+                     labels = c("Short", "Medium", "Long")) +
+  theme_classic() +
+  # scale_shape(solid = FALSE) +
+  xlab("Stimuli (n = 75)") +
+  ylab("Confidence") +
+  ylim(1.3, 3) +  # Adjust y-axis limits as needed
+  theme(axis.text.x = element_blank(), 
+        legend.text = element_text(size = 12), # Change legend text font size
+        legend.title = element_text(size = 12), # Change legend title font size
+        legend.position = "none",  # Remove the legend
+        axis.title.y = element_text(size = 14),
+        axis.title.x = element_text(size = 12)) +
+  theme(panel.background = element_rect(fill = "white"))
+
+ResponsePlot_conf
+
+```
+
+Combine plots and save
+
+```{r}
+
+Figure_1B <- grid.arrange(ResponsePlot,ResponsePlot_conf,ncol = 1)
+ggsave("~/Desktop/ResponsePlot_exp2.tiff", plot = Figure_1B, width = 4, height = 5, dpi = 600, device = "tiff", compression = "lzw")
+
+```
+
+### Experiment 3
+
+Analysis of the Music data collected in November 2022
+
+Following the preregistration: Larrouy-Maestri, P., & Wald-Fuhrmann, M. (2022, November 21).
+Perception of sounds as music or not: effect of stimulus duration
+Retrieved from osf.io/azkcp
+
+Clear and load
+```{r}
+rm(list = ls())
+
+# Load data
+Alldata <- read_excel("Exp_3.xlsx", sheet = "Categorisation_to_analyse")
+
+Stimulus <- as.numeric(Alldata$stim_name)
+exp_subject_id <-as.factor(Alldata$exp_subject_id)
+
+```
+
+ANALYSIS 1: Effect of repetition on the categorisation of stimuli
+
+Mixed effects logistic regression will be applied to predict the response (i.e., "Music" or "Not music") from the condition (i.e., first or second presentation), with random intercepts for participants and stimuli items.
+
+NOTE that the syntax in the registration included the "a priori" condition but is not presented in the paper (only mentioned as a footnote)
+Proposed tentative syntax (in the registration): Music_answer ~ a priori group + Order + a priori group:Order + (1|exp_subject_id) + (1|stim_name)
+
+
+Code to change the baseline of the factors (Order_letter) for the model
+```{r}
+Alldata$Order_letter <- as.factor(Alldata$Order_letter)
+Alldata$Order_letter <- relevel(Alldata$Order_letter, ref = "test")
+```
+
+Null and simplest model, including only duration:
+```{r}
+Effect_null <- glmer(data = Alldata, Music_answer ~ 1 + (1|exp_subject_id) + (1|stim_name), family = binomial)
+summary(Effect_null)
+
+Effect_log <- glmer(data = Alldata, Music_answer ~ Order_letter + (1|exp_subject_id) + (1|stim_name), family = binomial)
+summary(Effect_log)
+
+anova(Effect_null,Effect_log)
+```
+
+Details about the full model
+```{r}
+tidy (Effect_log)
+performance(Effect_log)
+```
+
+ICC for the random effects (all together and separately)
+```{r}
+# ICC calculation by group
+icc_results_group <- performance::icc(Effect_log, by_group = TRUE)
+print(icc_results_group)
+
+# ICC calculation for all random
+icc_results_all <- performance::icc(Effect_log, by_group = FALSE)
+print(icc_results_all)
+```
+
+# Figure 1C
+
+Preparation for the figure with each retests (3 conditions) against the baseline (single for all "test")
+```{r}
+
+Alldata <- Alldata %>%
+  mutate(New_Group = case_when(
+    Order_letter == 'test'  ~ 'Baseline',
+    Order_letter == 'retest' & Position == 'BB' ~ 'BB',
+    Order_letter == 'retest' & Position == 'WBR' ~ 'WBR',
+    Order_letter == 'retest' & Position == 'WBC' ~ 'WBC',
+    TRUE ~ 'Other'
+  ))
+
+```
+
+
+Setting colors for the plots
+
+```{r}
+baseline = "grey"
+BB = "pink"
+WBR = "cyan"
+WBC = "magenta"
+
+Position_colors = c(baseline,BB,WBR,WBC)
+```
+
+Plotting the music answers with 3 colors (Conditions: Baseline, BB, WBC, WBR)
+```{r}
+
+## From exp2:
+  # Compute mean music responses and mean confidence ratings
+DataPlot <- with(Alldata, aggregate(Music_answer, list(Stimuli=stim_name,Condition=New_Group), mean))
+
+DataPlot
+
+Baseline_means <- with(subset(Alldata, New_Group == "Baseline"), 
+                   tapply(Music_answer, stim_name, mean, na.rm = TRUE))
+
+# Reorder the Stimuli factor levels based on the means in the "self" condition
+DataPlot$Stimuli <- factor(DataPlot$Stimuli, 
+                           levels = names(sort(Baseline_means, decreasing = FALSE)))
+
+# Reorder the levels of the Condition factor
+DataPlot$Condition <- factor(DataPlot$Condition, levels = c("Baseline", "BB", "WBR","WBC"))
+
+
+# Create the plot with the reordered Condition levels
+ResponsePlot <- ggplot(DataPlot, aes(Stimuli, y = x, group = Condition, colour = Condition)) +
+  geom_point(aes(shape = Condition), size = 3.5) +
+  scale_colour_manual(values = Position_colors,
+                      labels = c("Baseline",  "BB", "WBR","WBC")) +
+  scale_shape_manual(values = c("Baseline" = 16,   # Solid circle
+                                 "BB" = 1,
+                                 "WBR"= 1,
+                                 "WBC"= 1),   # Hollow circle
+                     labels = c("Baseline",  "BB", "WBR","WBC")) +
+  theme_classic() +
+  xlab("Stimuli (n = 42)") +
+  ylab("Music responses") +
+  theme(axis.text.x = element_blank(), 
+        legend.text = element_text(size = 12), 
+        legend.title = element_text(size = 12), 
+        legend.position = c(0.25, 0.7),  # Move legend to top-left
+        axis.title.y = element_text(size = 14),
+        axis.title.x = element_text(size = 12),
+        legend.spacing.y = unit(0.1, "cm")) +  # Adjust space between legend items
+  theme(panel.background = element_rect(fill = "white"))
+ResponsePlot
+
+```
+
+Create and export plot
+```{r}
+Figure_1C <- grid.arrange(ResponsePlot,ncol = 1)
+ggsave("~/Desktop/ResponsePlot_exp3a.tiff", plot = Figure_1C, width = 3, height = 2, dpi = 600, device = "tiff", compression = "lzw")
+```
+
+Listeners' consistence observed with test-retest phi-coefficients for each condition
+
+```{r}
+consist_sub <- with(Alldata, aggregate(Music_answer, list(Sub=exp_subject_id, Stimuli=stim_name,Position=Position,Repetition=Order), mean))
+consist_sub
+
+consistency_sub <-reshape(consist_sub, idvar =c("Stimuli", "Position","Sub"), timevar = c("Repetition"), direction = "wide")
+consistency_sub 
+
+sub_correlation <- consistency_sub %>%
+  group_by(Sub, Position) %>%
+  summarise(
+    phi_coefficient = {
+      tbl <- table(x.1, x.2)
+      assocstats(tbl)$phi
+    },
+    p_value = {
+      tbl <- table(x.1, x.2)
+      chisq.test(tbl)$p.value
+    }
+  )
+
+print(sub_correlation)
+```
+
+Plot listeners' consistency between first and second presentation (grey dot for each stimulus on a x axis) for each Position separately (y axis)
+
+```{r}
+# Plot the difference values for each group in 'Position'
+
+# Function to calculate mean and confidence intervals
+mean_ci <- function(x) {
+  mean_x <- mean(x)
+  ci <- qt(0.975, df = length(x) - 1) * sd(x) / sqrt(length(x))
+  return(data.frame(y = mean_x, ymin = mean_x - ci, ymax = mean_x + ci))
+}
+
+Position_colors_violin = c(BB,WBC,WBR)
+
+# Plot itself
+ConsistencyPlot <- ggplot(sub_correlation, aes(x = Position, y = phi_coefficient, colour = Position, fill = Position)) +
+  #geom_violin(alpha = 0.5) +
+  geom_boxplot(alpha = 0.5)+
+  scale_colour_manual(values = Position_colors_violin) +
+  scale_fill_manual(values = Position_colors_violin) +
+  geom_jitter(width = 0.2, alpha = 0.5) +
+  stat_summary(fun.data = mean_ci, geom = "pointrange", color = "black", size = 0.5) +
+  theme_classic() +
+  labs(#title = "Exp 3",
+       x = "Position",
+       y = "Phi coeficient") +
+  theme(legend.position="Position",
+        axis.title.y = element_text(size = 14),
+        axis.title.x = element_text(size = 12)) +
+  theme(panel.background = element_rect(fill = "white"))
+
+ConsistencyPlot
+
+```
+
+Creation and export of figure 1C
+
+```{r}
+Figure_1C <- grid.arrange(ResponsePlot,ConsistencyPlot,ncol = 1)
+ggsave("~/Desktop/ResponsePlot_exp3.tiff", plot = Figure_1C, width = 3, height = 5, dpi = 600, device = "tiff", compression = "lzw")
+```
+
+Comparison of listeners' consistency (i.e., Phi coefficients) across conditions with anova and Turkey test
+
+```{r}
+## Test the effect of Position on the Phi coefficients with (independent measures) Anova
+consistency_anova <- aov(phi_coefficient~factor(Position), data = sub_correlation)
+summary(consistency_anova)
+
+# Run the ANOVA
+consistency_anova <- aov(phi_coefficient ~ factor(Position), data = sub_correlation)
+summary(consistency_anova)
+
+# Perform Tukey HSD post hoc test
+tukey_result <- TukeyHSD(consistency_anova)
+
+# Display the Tukey HSD result
+print(tukey_result)
+
+# Calculate mean and standard deviation of phi_coefficient per Position
+summary_stats <- sub_correlation %>%
+  group_by(Position) %>%
+  summarise(
+    mean_phi = mean(phi_coefficient, na.rm = TRUE),
+    sd_phi = sd(phi_coefficient, na.rm = TRUE)
+  )
+
+# Print the summary statistics
+print(summary_stats)
+```
+
+Plot of the two figures for Experiment 3
+```{r}
+
+Figure_1C <- grid.arrange(ResponsePlot,ConsistencyPlot,ncol = 1)
+
+```
+
+
+
+#Experiment 4
+
+Loading the libraries
+
+```{r}
+
+#This package crushes with dplyr so we detach
+detach("package:Hmisc", unload = TRUE)
+
+
+# Load everything else first
+suppressWarnings(suppressMessages(library(readr)))
+suppressWarnings(suppressMessages(library(tidyr)))
+suppressWarnings(suppressMessages(library(ggplot2)))
+suppressWarnings(suppressMessages(library(tidyverse)))
+suppressWarnings(suppressMessages(library(psych)))
+suppressWarnings(suppressMessages(library(readxl)))  
+suppressWarnings(suppressMessages(library(patchwork)))
+suppressWarnings(suppressMessages(library(caTools)))
+suppressWarnings(suppressMessages(library(car)))
+suppressWarnings(suppressMessages(library(quantmod)))
+suppressWarnings(suppressMessages(library(MASS)))
+suppressWarnings(suppressMessages(library(corrplot)))
+suppressWarnings(suppressMessages(library(effects)))
+suppressWarnings(suppressMessages(library(writexl)))
+suppressWarnings(suppressMessages(library(stringr)))
+suppressWarnings(suppressMessages(library(ape)))
+suppressWarnings(suppressMessages(library(grid)))
+suppressWarnings(suppressMessages(library(gridExtra)))
+suppressWarnings(suppressMessages(library(dplyr)))
+
+
+```
+
+Loading the data
+```{r}
+all_data <- read_excel("all_data.xlsx",
+          sheet = "Sheet1")
+
+all_data <- all_data %>%
+  relocate(exp_subject_id, .before = audio_name)
+
+all_tasks <- read_excel("all_tasks.xlsx",
+           sheet = "Sheet1")
+
+all_tasks <- all_tasks %>%
+  relocate(exp_subject_id, .before = audio_name)
+
+
+demo_data <- read_excel("demo_data.xlsx",
+                        sheet = "Sheet1")
+```
+
+
+#############
+ MAIN TASK 
+#############
+
+We will create a dataframe for the main task, since the order of the sliders were randomized across 6 conditions, there are 6 different task names. 
+
+monra = music or not ratings (What do you think this is? 0 = not-music, 100 = music, all features are also rated on sliders from 0 to 100.)
+
+```{r}
+ratings <- all_data %>%
+  dplyr::select(!monra) %>%
+  filter(task_name %in% c("Categorization", "Categorization2", "Categorization3", "Categorization4", "Categorization5", "Categorization6")) %>%
+  left_join(
+    all_data %>%
+      filter(task_name %in% c("Music_or_not")) %>%
+      dplyr::select(exp_subject_id, audio_name, monra),
+    join_by(exp_subject_id, audio_name)
+  ) %>%
+  filter(!audio_group == "signal") %>%
+  dplyr::select(exp_subject_id, audio_name, monra, pulse, rhythm, repetition, melody, instrumental, timbre, tempo, intentionality, harmony, complexity)
+
+#Now the long format of the same dataframe
+
+ratings_long <- pivot_longer(ratings, 
+                         cols = c(monra, pulse, rhythm, repetition, melody, instrumental, timbre, tempo, intentionality, harmony, complexity), # dplyr::select columns to pivot
+                         names_to = "variable",     # new column name for variable names
+                         values_to = "value") %>%
+   mutate(levels = case_when(
+    variable %in% c("instrumental", "intentionality", "complexity", "repetition") ~ 3,
+    variable %in% c("harmony", "melody", "rhythm") ~ 2,
+    variable %in% c("timbre", "pulse", "tempo") ~ 1,
+    TRUE ~ NA_integer_  # Default case if none of the conditions match
+  ))
+
+ratings_long_wo_monra <- ratings_long %>%
+  filter(!variable == "monra")
+ratings_long_music <- ratings_long %>%
+  filter(variable == "monra")
+
+ratings_long2 <- pivot_longer(ratings, 
+                         cols = c(pulse, rhythm, repetition, melody, instrumental, timbre, tempo, intentionality, harmony, complexity), # dplyr::select columns to pivot
+                         names_to = "variable",     # new column name for variable names
+                         values_to = "value") %>%
+   mutate(levels = case_when(
+    variable %in% c("instrumental", "intentionality", "complexity", "repetition") ~ 3,
+    variable %in% c("harmony", "melody", "rhythm") ~ 2,
+    variable %in% c("timbre", "pulse", "tempo") ~ 1,
+    TRUE ~ NA_integer_  # Default case if none of the conditions match
+  ))
+
+
+```
+
+
+Creating the dataframes for musical sophistication index (Gold-MSI) and auditory imagery (vividness, BAIS-V)
+
+```{r}
+ratings_scales <- dplyr::select(all_data, exp_subject_id, task_name, audio_name, audio_group, monra, pulse, repetition, rhythm, melody, instrumental, timbre, tempo, intentionality, harmony, complexity, ae_01, ae_02, ae_05, ae_07, baisv_01, baisv_02, baisv_03, baisv_04, baisv_05, baisv_06, baisv_07, baisv_08, baisv_09, baisv_10, baisv_11, baisv_12, baisv_13, baisv_14, mt_01, mt_02, mt_03, mt_06, mt_07, pa_04, pa_08, sa_01, sa_02, sa_03, sa_04, sa_05, sa_06, em_04)
+
+ratings <- all_data %>%
+  dplyr::select(exp_subject_id, task_name, audio_name, audio_group, monra, pulse, repetition, rhythm, melody, instrumental, timbre, tempo, intentionality, harmony, complexity) %>%
+  na.omit()
+
+
+ratings <- all_data %>%
+  filter(task_name %in% c("Categorization", "Categorization2", "Categorization3", "Categorization4", "Categorization5", "Categorization6")) %>%
+  dplyr::select(exp_subject_id, audio_name, pulse, repetition, rhythm, melody, instrumental, timbre, tempo, intentionality, harmony, complexity) %>%
+  left_join(
+    all_data %>%
+      filter(!audio_group == "signal") %>%
+      filter(task_name %in% c("Music_or_not")) %>%
+      dplyr::select(exp_subject_id, audio_name, monra),
+    join_by(exp_subject_id, audio_name)
+  )
+
+```
+
+
+
+Filter only the categorization task and then filter out the signal sounds
+
+```{r}
+#Only ratings of perceptual features
+
+features_data <- ratings_scales %>%
+  filter(task_name %in% c("Categorization", "Categorization2", "Categorization3", "Categorization4", "Categorization5", "Categorization6"),
+         !audio_group == "signal") %>%
+  dplyr::select(exp_subject_id, audio_name, pulse, rhythm, repetition, melody, instrumental, timbre, tempo, intentionality, harmony, complexity)
+
+#Only music or not ratings
+monra_data <- ratings_scales %>%
+  filter(task_name %in% c("Music_or_not"),
+         !audio_group == "signal") %>%
+  dplyr::select(exp_subject_id, audio_name, monra)
+
+write_xlsx(monra_data, "monra_data.xlsx")
+
+```
+
+
+
+Data Frames for MM1 analysis
+
+```{r}
+
+monra_mm1 <- monra_data %>%
+  pivot_wider(names_from = audio_name, values_from = monra)
+
+pulse_mm1 <- features_data %>%
+  dplyr::select(exp_subject_id, audio_name, pulse) %>%
+  pivot_wider(names_from = audio_name, values_from = pulse)
+
+repetition_mm1 <- features_data %>%
+  dplyr::select(exp_subject_id, audio_name, repetition) %>%
+  pivot_wider(names_from = audio_name, values_from = repetition)
+
+rhythm_mm1 <- features_data %>%
+  dplyr::select(exp_subject_id, audio_name, rhythm) %>%
+  pivot_wider(names_from = audio_name, values_from = rhythm)
+
+melody_mm1 <- features_data %>%
+  dplyr::select(exp_subject_id, audio_name, melody) %>%
+  pivot_wider(names_from = audio_name, values_from = melody)
+
+instrumental_mm1 <- features_data %>%
+  dplyr::select(exp_subject_id, audio_name, instrumental) %>%
+  pivot_wider(names_from = audio_name, values_from = instrumental)
+
+timbre_mm1 <- features_data %>%
+  dplyr::select(exp_subject_id, audio_name, timbre) %>%
+  pivot_wider(names_from = audio_name, values_from = timbre)
+
+tempo_mm1 <- features_data %>%
+  dplyr::select(exp_subject_id, audio_name, tempo) %>%
+  pivot_wider(names_from = audio_name, values_from = tempo)
+
+intentionality_mm1 <- features_data %>%
+  dplyr::select(exp_subject_id, audio_name, intentionality) %>%
+  pivot_wider(names_from = audio_name, values_from = intentionality)
+
+harmony_mm1 <- features_data %>%
+  dplyr::select(exp_subject_id, audio_name, harmony) %>%
+  pivot_wider(names_from = audio_name, values_from = harmony)
+
+complexity_mm1 <- features_data %>%
+  dplyr::select(exp_subject_id, audio_name, complexity) %>%
+  pivot_wider(names_from = audio_name, values_from = complexity)
+
+
+```
+
+
+A more descriptive DF that we will use, the mean ratings of all sliders (monra + features) at the STIMULUS level!
+
+```{r}
+audio_descriptives <- ratings %>%
+  group_by(audio_name) %>%
+  summarize(
+            mean_monra = mean(monra, na.rm = TRUE),
+            mean_pulse = mean(pulse, na.rm = TRUE),
+            mean_repetition = mean(repetition, na.rm = TRUE),
+            mean_rhythm = mean(rhythm, na.rm = TRUE),
+            mean_melody = mean(melody, na.rm = TRUE),
+            mean_instrumental = mean(instrumental, na.rm = TRUE),
+            mean_timbre = mean(timbre, na.rm = TRUE),
+            mean_tempo = mean(tempo, na.rm = TRUE),
+            mean_intentionality = mean(intentionality, na.rm = TRUE),
+            mean_harmony = mean(harmony, na.rm = TRUE),
+            mean_complexity = mean(complexity, na.rm = TRUE))
+
+audio_descriptives_long <- pivot_longer(audio_descriptives,
+                                  cols = c(mean_monra, mean_pulse, mean_rhythm, mean_repetition, mean_melody, mean_instrumental, 
+                                                 mean_timbre, mean_tempo, mean_intentionality, mean_harmony, mean_complexity), 
+                                  names_to = "variable",    
+                                  values_to = "value")
+```
+
+
+We do the k-means clustering here. This is because the clusters will then be used for further analysis etc. and it is more convenient to do the kmeans clustering already in this section.
+
+Because R gives random numbers to clusters each time we run the analyses, we will simply upload the file with clusters, the code to find those clusters are commented out. 
+
+We decided that a 3-cluster-solution is the best. Looking at them, there is one with music stimuli (music cluster), another with not-music stimuli (not-music cluster, although in the code you might see it as "non-music"), and then a cluster in between, which we call the "ambiguous cluster". 
+
+```{r}
+# # Assuming you have loaded your data frame 'audio_descriptives' correctly
+# justmeans <- dplyr::select(audio_descriptives, audio_name, mean_monra)
+# 
+# # Perform k-means clustering
+# kmm <- kmeans(justmeans$mean_monra, 3, nstart = 50, iter.max = 15)
+# print(kmm)
+# print(kmm$betweenss / kmm$totss)
+# 
+# # Method 1: Elbow Method for finding the optimal number of clusters
+# set.seed(123)
+# 
+# # Compute and plot wss for k = 2 to k = 15
+# k.max <- 15
+# data <- justmeans$mean_monra  # Ensure this is the correct column name
+# data <- na.omit(data)  # Remove NA values if any
+# 
+# wss <- sapply(1:k.max, function(k) {
+#   kmeans(data, k, nstart = 50, iter.max = 15)$tot.withinss
+# })
+# 
+# # Plot the results
+# plot(1:k.max, wss,
+#      type = "b", pch = 19, frame = FALSE, 
+#      xlab = "Number of clusters",
+#      ylab = "Total Within-Clusters Sum of Squares")
+# 
+# 
+# 
+# justmeans <- justmeans %>% 
+#   mutate(cluster = kmm$cluster)
+# 
+# # View the first few rows of the updated data frame
+# head(justmeans)
+
+#write_xlsx(justmeans, "justmeans.xlsx")
+
+
+#Loading the data with stimuli, cluster labels, and cluster numbers (numbers will be irrelevant)
+
+justmeans <- read_excel("justmeans.xlsx",
+           sheet = "Sheet1")
+
+
+```
+
+Now we add the clusters to different dataframes to be able to work on them later.
+
+```{r}
+
+# Create a separate data frame called audio_clusters for clarity and future use
+audio_clusters <- justmeans %>% 
+  dplyr::select(audio_name, cluster) %>%
+  mutate(label = case_when(
+    cluster == 1 ~ "music",
+    cluster == 2 ~ "ambiguous",
+    cluster == 3 ~ "non-music"))
+
+audio_clusters <- audio_clusters %>%
+  mutate(clean_names = audio_name %>%
+           gsub("^(M_|N_)", "", .) %>%  # Remove M_ or N_ at the start
+           gsub("\\.mp3$", "", .) %>%  # Remove .mp3 at the end
+           gsub("_", " ", .) %>%       # Replace underscores with spaces
+           str_to_title()              # Capitalize each word
+         )
+
+audio_descriptives <- merge(audio_descriptives, audio_clusters, by = "audio_name")
+
+#Including the cluster column to other dataframes
+
+ratings <- ratings %>%
+  left_join(audio_clusters %>%
+              dplyr::select(audio_name, label, cluster),
+            by = "audio_name")
+
+ratings_long <- ratings_long %>%
+  left_join(audio_clusters %>%
+              dplyr::select(audio_name, label),
+            by = "audio_name")
+
+ratings_long_wo_monra <- ratings_long_wo_monra %>%
+  left_join(audio_clusters %>%
+              dplyr::select(audio_name, label),
+            by = "audio_name")
+
+
+ratings_order <- ratings %>%
+  mutate(order = case_when(
+    label == "music" ~ 1,
+    label == "ambiguous" ~ 2,
+    label == "non-music" ~ 3,
+    TRUE ~ NA_real_  # in case there are other or missing values
+  ))
+
+ratings_order$order <- as.factor(ratings_order$order)
+
+ratings_lme <- ratings
+
+write_xlsx(audio_descriptives, "audio_descriptives.xlsx")
+
+write_xlsx(ratings, "ratings.xlsx")
+
+```
+
+
+A dataframe for the means of all audios
+
+```{r}
+
+audio_features <- dplyr::select(audio_descriptives, audio_name, mean_monra, mean_pulse, mean_rhythm, mean_repetition, mean_melody, mean_instrumental, mean_timbre, mean_tempo, mean_intentionality, mean_harmony, mean_complexity, label)
+
+write_xlsx(audio_features, "audio_features.xlsx")
+
+```
+
+
+
+Participant means, average values at the participant level
+
+```{r}
+
+participant_means <- ratings %>%
+  group_by(exp_subject_id) %>%
+  summarize(across(.cols = c(monra, pulse, rhythm, repetition, melody, instrumental, timbre, tempo, intentionality, harmony, complexity), .fns = mean))
+
+
+```
+
+
+
+Calculate Gold-MSI
+
+```{r}
+
+gold <- dplyr::select(all_tasks, exp_subject_id, ae_01, ae_02, ae_05, ae_07, mt_01, mt_02, mt_03, mt_06, mt_07, pa_04, pa_08, sa_01, sa_02, sa_03, sa_04, sa_05, sa_06, em_04)
+
+gold <- aggregated_data <- aggregate(. ~ exp_subject_id, data = gold, FUN = function(x) x[!is.na(x)][1])
+
+gold2<- dplyr::select(gold, ! exp_subject_id)
+
+keys_gold <- c("sa_05", "sa_04", "mt_03", "mt_07", "pa_08")
+
+rec <-  psych::reverse.code(keys = keys_gold, items = gold2, mini = 1, maxi = 7) 
+
+# View(rec)
+rec <- as.data.frame(rec)
+
+#GM_sum 
+rec$gold=rowSums(cbind(rec$ae_01,rec$ae_02,rec$ae_05,rec$ae_07,rec$em_04,rec$mt_01,rec$mt_02,rec$`mt_03-`,rec$mt_06,rec$`mt_07-`,rec$pa_04,rec$`pa_08-`,rec$sa_01,rec$sa_02,rec$sa_03,rec$`sa_04-`,rec$`sa_05-`,rec$sa_06))
+
+rec$exp_subject_id <- gold$exp_subject_id
+gold_score <- dplyr::select(rec, exp_subject_id, gold)
+
+
+```
+
+
+Calculate BAIS-V
+
+```{r}
+
+bais <- dplyr::select(all_tasks, exp_subject_id, baisv_01, baisv_02, baisv_03, baisv_04, baisv_05, baisv_06, baisv_07, baisv_08, baisv_09, baisv_10, baisv_10, baisv_11, baisv_12, baisv_13, baisv_14)
+bais <- na.omit(bais)
+rec <- as.data.frame(bais)
+
+#Mean_score
+rec$bais=rowMeans(cbind(rec$baisv_01,rec$baisv_02,rec$baisv_03,rec$baisv_04,rec$baisv_05,rec$baisv_06,rec$baisv_07,rec$baisv_08,rec$baisv_09,rec$baisv_10,rec$baisv_11,rec$baisv_12,rec$baisv_13,rec$baisv_14))
+
+BAIS_score<- dplyr::select(rec,bais)
+BAIS_score <- cbind(BAIS_score, bais$exp_subject_id)
+colnames(BAIS_score)[colnames(BAIS_score) == "BAIS_score$exp_subject_id"] <- "exp_subject_id"
+
+scales <-cbind(gold_score, BAIS_score)
+
+```
+
+
+Calculate Openness
+
+```{r}
+
+openness <- dplyr::select(all_tasks, exp_subject_id, open1, open2, open3, open4, open5, open6, open7, open8, open9, open10)
+
+reverse_code <- function(x) {
+  return(6 - x)
+}
+
+# Apply reverse coding and calculate total_openness
+openness <- openness %>%
+  mutate(
+    open2 = reverse_code(open2),
+    open4 = reverse_code(open4),
+    open6 = reverse_code(open6),
+    open8 = reverse_code(open8),
+    open10 = reverse_code(open10)
+  ) %>%
+  group_by(exp_subject_id) %>%
+  summarise(total_openness = sum(c_across(open1:open10), na.rm = TRUE))
+
+# View the result
+print(openness)
+
+# Merge all scales in one dataframe
+all_scales <- merge(scales, openness, by ="exp_subject_id")
+all_scales <- all_scales 
+
+openness_mean <- mean(all_scales$total_openness, na.rm = TRUE)
+openness_sd <- sd(all_scales$total_openness, na.rm = TRUE)
+openness_min <- min(all_scales$total_openness, na.rm = TRUE)
+openness_max <- max(all_scales$total_openness, na.rm = TRUE)
+
+bais_mean <- mean(all_scales$bais, na.rm = TRUE)
+bais_sd <- sd(all_scales$bais, na.rm = TRUE)
+bais_min <- min(all_scales$bais, na.rm = TRUE)
+bais_max <- max(all_scales$bais, na.rm = TRUE)
+
+gold_mean <- mean(all_scales$gold, na.rm = TRUE)
+gold_sd <- sd(all_scales$gold, na.rm = TRUE)
+gold_min <- min(all_scales$gold, na.rm = TRUE)
+gold_max <- max(all_scales$gold, na.rm = TRUE)
+
+cat(
+  paste0("The mean of total openness is ", round(openness_mean, 2), 
+         ", with a standard deviation of ", round(openness_sd, 2), 
+         ". The minimum value is ", round(openness_min, 2), 
+         " and the maximum value is ", round(openness_max, 2), ".\n\n"),
+
+  paste0("The mean of BAIS is ", round(bais_mean, 2), 
+         ", with a standard deviation of ", round(bais_sd, 2), 
+         ". The minimum value is ", round(bais_min, 2), 
+         " and the maximum value is ", round(bais_max, 2), ".\n\n"),
+
+  paste0("The mean of Gold-MSI is ", round(gold_mean, 2), 
+         ", with a standard deviation of ", round(gold_sd, 2), 
+         ". The minimum value is ", round(gold_min, 2), 
+         " and the maximum value is ", round(gold_max, 2), ".")
+)
+
+```
+
+Let's compute how well participants understood the definitions of features that we provided!
+
+```{r}
+
+understanding <- all_tasks %>%
+  dplyr::select(exp_subject_id, pulseund, melodyund, instrumentalund, timbreun, tempound, intentionalityund, harmonyund, complexityund, toneund, rhythmund) %>%
+  na.omit() %>%
+  group_by(exp_subject_id) %>%
+  summarise(total_und = sum(c_across(pulseund:complexityund)))
+
+understanding_perfeature <- all_tasks %>%
+  dplyr::select(exp_subject_id, pulseund, melodyund, instrumentalund, timbreun, tempound, intentionalityund, harmonyund, complexityund, toneund, rhythmund) %>%
+  na.omit()
+
+
+understanding_long <- pivot_longer(understanding_perfeature,
+                                  cols = c(pulseund, melodyund, instrumentalund, timbreun, 
+                                           tempound, intentionalityund, harmonyund, complexityund, toneund, rhythmund), 
+                                  names_to = "variable",    
+                                  values_to = "value")
+
+understanding <- merge(understanding, all_scales, by ="exp_subject_id")
+
+
+
+```
+
+Let's compute how often participants listen to different genres
+
+
+```{r}
+genres <- all_tasks %>%
+  filter(task_name %in% c("Genres", "Genres2", "Genres3", "Genres4", "Genres5", "Genre6")) %>%
+  dplyr::select(exp_subject_id, top40, pop, rock, classical, noise, experimental, edm) 
+
+genres[is.na(genres)] <- 0
+
+genres <- genres %>%
+  mutate(music_diversity = noise + experimental,
+         noise_experimental_listen = ifelse(is.na(music_diversity), "no", "yes"))
+genres$noise_experimental_listen <- as.factor(genres$noise_experimental_listen)  
+
+all_scales <- all_scales %>%
+  left_join(genres %>%
+              dplyr::select(exp_subject_id, music_diversity),
+            by = "exp_subject_id")  
+
+
+```
+
+
+Calculate the mean age and gender information
+
+```{r}
+# Age statistics
+age_mean <- mean(demo_data$age, na.rm = TRUE)
+age_sd <- sd(demo_data$age, na.rm = TRUE)
+age_min <- min(demo_data$age, na.rm = TRUE)
+age_max <- max(demo_data$age, na.rm = TRUE)
+
+# Gender distribution
+gender_counts <- table(demo_data$gender)
+
+# Print results in full sentences
+cat(
+  paste0("The mean age of participants is ", round(age_mean, 2), 
+         ", with a standard deviation of ", round(age_sd, 2), 
+         ". The youngest participant is ", age_min, 
+         " years old, and the oldest is ", age_max, " years old.\n\n"),
+
+  paste0("The gender distribution is as follows:\n"),
+  paste0(names(gender_counts), ": ", gender_counts, collapse = "\n")
+)
+
+
+```
+
+Put the average rating for each participant to the scales df
+
+```{r}
+
+means_scales <- merge(all_scales, participant_means, by = "exp_subject_id")
+
+means_scales_age <- means_scales %>%
+  left_join(demo_data %>%
+              dplyr::select(exp_subject_id, age),
+              by = "exp_subject_id") 
+
+means_scales_age_genres <- merge(means_scales_age, genres, by = "exp_subject_id")
+
+```
+
+A DF just for the ambiguous stimuli 
+
+```{r}
+ambiguous_stimuli <- ratings %>%
+  filter(label == "ambiguous")
+
+ambiguous_participant_means <- ambiguous_stimuli %>%
+  group_by(exp_subject_id) %>%
+  summarize(mean_monra = mean(monra)) %>%
+  dplyr::select(exp_subject_id, mean_monra)
+
+```
+
+
+A DF for the descriptive stats for monra 
+
+```{r}
+monra_desc_stats <- ratings |> 
+  group_by(audio_name) |> 
+  summarize(mean_monra = mean(monra),
+            sd_monra = sd(monra)) |> 
+  left_join(audio_clusters |> 
+              dplyr::select(audio_name, label),
+            by = "audio_name")
+
+monra_desc_stats$label <- factor(monra_desc_stats$label, levels = c("non-music", "ambiguous", "music"))
+
+```
+
+
+Circular cluster plot for the paper, included in Figure 2A
+
+```{r}
+# Reorder the audio_name based on the label to group the clusters
+audio_clusters <- audio_clusters[order(audio_clusters$label), ]
+
+audio_clusters$audio_name <- as.character(audio_clusters$audio_name)
+
+# Step 1: Order the dataframe alphabetically including prefixes
+audio_clusters <- audio_clusters %>%
+  arrange(audio_name) 
+audio_clusters$number <- 1:nrow(audio_clusters)  # Assign numbers sequentially
+
+
+audio_clusters <- audio_clusters %>%
+  mutate(clean_names = str_replace(audio_name, '^(.+)\\.mp3$', '\\1')) %>%
+  mutate(clean_names = str_to_title(clean_names))
+
+
+distance_mat <- dist(audio_descriptives$mean_monra, method = 'euclidean')
+
+
+# Fitting Hierarchical clustering Model to training dataset
+set.seed(240) # Setting seed
+Hierar_cl <- hclust(distance_mat, method = "average")
+
+
+# Assuming 'Hierar_cl' is your hclust result and 'fit' contains cluster assignments
+phylo_tree <- as.phylo(Hierar_cl)  # Convert hclust to phylo object
+fit <- cutree(Hierar_cl, k = 3)
+
+# Define your cluster colors
+# Ensure 'fit' is a vector containing cluster assignments for each tip
+colors <- c("red", "blue", "green")  # 1 = red, 2 = blue, 3 = green
+tip_colors <- colors[fit]  # Map the cluster assignments to colors
+
+# Plot the circular dendrogram with color-coded tips
+plot(phylo_tree, 
+     type = "fan",       # Circular plot
+     tip.color = tip_colors,  # Color tips based on clusters
+     label.offset = 0.01,  # Space between tips and labels
+     cex = 1.6,           # Text size
+     show.tip.label = TRUE)  # Show labels (audio names)
+
+
+# Define colors for each cluster
+label_colors <- c("music" = "red", "ambiguous" = "blue", "non-music" = "green")
+
+# Create a blank plot for printing the text
+grid.newpage()
+
+# Set up the column positions
+x_positions <- c(0.1, 0.4, 0.7)  # X coordinates for the 3 columns
+
+# Loop through each row and assign text to the correct column and row position
+for (i in 1:nrow(audio_clusters)) {
+  # Determine the column (1st, 2nd, or 3rd column)
+  column <- ((i - 1) %/% 30) + 1
+  row <- (i - 1) %% 30 + 1
+  
+  # Calculate the y position for each row (invert row index for grid positioning)
+  y_position <- 1 - (row * 0.03)  # Adjust spacing between rows
+
+  # Print the text in the correct column, color-coded by cluster
+  grid.text(
+    label = paste(audio_clusters$number[i], "-", audio_clusters$clean_names[i]), 
+    x = x_positions[column], 
+    y = y_position, 
+    gp = gpar(col = label_colors[audio_clusters$label[i]], fontsize = 20),
+    just = "left"
+  )
+}
+  
+
+
+
+   
+```
+
+Plotting the participants and audios ordered by mean (Figure 2B)
+
+The first column represent the mean music ratings ordered from high (on top) to low (on the bottom). Then, every other column is the ranking of each participant's music ratings.
+
+```{r}
+
+# Reshaping the dataframe
+monra_mm1_long <- monra_mm1 %>%
+  pivot_longer(
+    cols = -exp_subject_id,  # Keep exp_subject_id, gather other columns
+    names_to = "audio_name",  # The names of the audio columns will go to this new column
+    values_to = "rating"      # The ratings will go to this new column
+  )
+
+# Now pivot wider so that exp_subject_id becomes columns
+monra_mm1_wide <- monra_mm1_long %>%
+  pivot_wider(
+    names_from = exp_subject_id,  # The exp_subject_id values become new columns
+    values_from = rating          # Values come from the rating column
+  )
+
+
+monra_mean_participants <- monra_mm1_wide %>%
+  left_join(audio_descriptives %>% dplyr::select(audio_name, mean_monra), by = "audio_name") %>%
+  relocate(mean_monra, .after = audio_name) %>%
+  left_join(audio_clusters %>% dplyr::select(audio_name, label), by = "audio_name") %>%
+  relocate(label, .after = mean_monra)
+
+# Step 1: Reshape the original data to long format for participant ratings
+long_data <- monra_mean_participants %>%
+  pivot_longer(
+    cols = -c(audio_name, mean_monra, label),  # Exclude non-participant columns
+    names_to = "participant_id", 
+    values_to = "rating"
+  ) %>%
+  dplyr::group_by(participant_id) %>%
+  dplyr::arrange(rating, .by_group = TRUE) %>%
+  mutate(rank = row_number())  # Assign rank based on the order of ratings within each participant
+
+# Step 2: Create a long format for mean_monra
+mean_monra_long <- monra_mean_participants %>%
+  dplyr::select(audio_name, mean_monra, label) %>%
+  mutate(participant_id = "mean_monra", rating = mean_monra) %>%
+  dplyr::select(audio_name, participant_id, rating, label)
+
+# Step 3: Combine both long formats
+combined_long_data <- bind_rows(long_data, mean_monra_long)
+
+# Step 4: Adjust the participant_id to make mean_monra first
+combined_long_data <- combined_long_data %>%
+  mutate(participant_id = factor(participant_id, levels = c("mean_monra", unique(long_data$participant_id))))  # Ensures mean_monra is first
+
+# Step 5: Rank the combined data
+combined_long_data <- combined_long_data %>%
+  dplyr::group_by(participant_id) %>%
+  dplyr::arrange(rating, .by_group = TRUE) %>%
+  mutate(rank = row_number())  # Assign rank for all participants including mean_monra
+
+# Step 6: Create the plot
+ggplot(combined_long_data, aes(x = participant_id, y = rank, fill = label)) +
+  geom_tile() +
+  scale_fill_manual(
+    values = c("music" = "red", "ambiguous" = "blue", "non-music" = "green"),
+    labels = c("music" = "Music", "ambiguous" = "Ambiguous", "non-music" = "Not-music")
+  ) +
+  labs(
+    x = "Participants",
+    y = "Ranking of Stimuli",
+    title = " ",
+    fill = "Cluster"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_blank(),
+    axis.title.x = element_text(size = 30),
+    axis.text.y = element_blank(),
+    axis.title.y = element_text(size = 30),
+    panel.grid = element_blank(),
+    legend.text = element_text(size = 15),
+    legend.title = element_text(size = 20),
+    axis.text.x.left = element_text(
+      ifelse(unique(combined_long_data$participant_id) == "mean_monra", "black", "transparent")
+    )
+  )
+
+
+
+```
+
+
+
+Experiment 4 Analyses
+
+```{r}
+# install.packages("irr")
+# install.packages("lmerTest")
+# install.packages("MuMIn")
+# install.packages("factoextra")
+# install.packages("simr")
+# install.packages("car")
+# install.packages("sjPlot")
+# install.packages("ggsignif")
+# install.packages("gridExtra")
+# install.packages("emmeans")
+# install.packages("ggradar")
+# install.packages("fmsb")
+# install.packages("effects")
+# install.packages("nnet")
+# install.packages("MASS")
+# install.packages("multcomp")
+# install.packages("ggsignif")
+# install.packages("ggrepel")
+# #install.packages("ggradar")
+# install.packages("effects")
+# install.packages("poLCA")
+# install.packages("lcmm")
+# install.packages("mclust")
+# install.packages("rcompanion")
+# install.packages("pscl")
+#install.packages("ordinal")
+
+options(scipen=999)
+suppressWarnings(suppressMessages(library(car)))
+suppressWarnings(suppressMessages(library(corrplot)))
+suppressWarnings(suppressMessages(library(dplyr)))
+suppressWarnings(suppressMessages(library(effects)))
+suppressWarnings(suppressMessages(library(emmeans)))
+suppressWarnings(suppressMessages(library(factoextra)))
+suppressWarnings(suppressMessages(library(fmsb)))
+suppressWarnings(suppressMessages(library(ggrepel)))
+suppressWarnings(suppressMessages(library(ggsignif)))
+suppressWarnings(suppressMessages(library(gridExtra)))
+suppressWarnings(suppressMessages(library(irr)))
+suppressWarnings(suppressMessages(library(lcmm)))
+suppressWarnings(suppressMessages(library(lme4)))
+suppressWarnings(suppressMessages(library(lmerTest)))
+suppressWarnings(suppressMessages(library(MASS)))
+suppressWarnings(suppressMessages(library(mclust)))
+suppressWarnings(suppressMessages(library(MuMIn)))
+suppressWarnings(suppressMessages(library(multcomp)))
+suppressWarnings(suppressMessages(library(nnet)))
+suppressWarnings(suppressMessages(library(ordinal)))
+suppressWarnings(suppressMessages(library(poLCA)))
+suppressWarnings(suppressMessages(library(pscl)))
+suppressWarnings(suppressMessages(library(rcompanion)))
+suppressWarnings(suppressMessages(library(simr)))
+suppressWarnings(suppressMessages(library(sjPlot)))
+suppressWarnings(suppressMessages(library(tidyr)))
+
+
+```
+
+
+MM1 for monra
+
+Overall MM1 value for music ratings is .87. This is very high, so participants to agree with each other. This is reported in the paper.
+
+```{r}
+
+MM1_revised <- function(df){
+  #save & remove subj id
+  id <- df[, 1]
+  df <- as.matrix(df[,-1])
+  
+  #Compute means minus one
+  means <- matrix(0, nrow = nrow(df), ncol = ncol(df))
+  for(j in 1:nrow(df)){
+    means[j,] <- colMeans(df[-j,])
+  }
+  
+  #Compute correlations between means minus ones and ones ratings
+  mm1 <- sapply(1:nrow(df), function(.x) cor(df[.x,], means[.x,]))
+  
+  #transform correlations into z scores (r to z Fisher)
+  z_scores <- sapply(mm1, function(x) log((1 + x)/(1 - x))) * .5 
+  
+  #save average correlation (z average to r average Fisher) and correlations per rater
+  result <-  list(MM1 = (exp(2 * (mean(z_scores))) - 1)/(exp( 2 * (mean(z_scores))) + 1), 
+                  raw = data.frame(id, mm1 = mm1, mm1_z = z_scores))
+  result
+}
+
+#I wanted to see the MM1 list pls
+MM1_List <- MM1_revised(monra_mm1)
+
+MM1_L <- as.data.frame(MM1_List$raw)
+
+cat(paste0("MM1 for music ratings is ", round(MM1_List$MM1, 2), 
+           ", indicating high agreement among participants."))
+
+```
+
+
+MM1 for each features (Reported)
+
+This varies... For higher level features, there is more agreement, for lower level features, there is less...
+
+```{r}
+
+MM1_repetition <- MM1_revised(repetition_mm1)
+MM1_repetition$MM1
+
+MM1_pulse <- MM1_revised(pulse_mm1)
+MM1_pulse$MM1
+
+MM1_rhythm <- MM1_revised(rhythm_mm1)
+MM1_rhythm$MM1
+
+MM1_melody <- MM1_revised(melody_mm1)
+MM1_melody$MM1
+
+MM1_instrumental <- MM1_revised(instrumental_mm1)
+MM1_instrumental$MM1
+
+MM1_timbre <- MM1_revised(timbre_mm1)
+MM1_timbre$MM1
+
+MM1_tempo <- MM1_revised(tempo_mm1)
+MM1_tempo$MM1
+
+MM1_intentionality <- MM1_revised(intentionality_mm1)
+MM1_intentionality$MM1
+
+MM1_harmony <- MM1_revised(harmony_mm1)
+MM1_harmony$MM1
+
+MM1_complexity <- MM1_revised(complexity_mm1)
+MM1_complexity$MM1
+
+
+```
+
+
+Krippendorff's alpha for each rating, at the group level. (Reported)
+
+```{r}
+
+monra_krip <- monra_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+monra_krip <- as.matrix(monra_krip)
+
+kripp.alpha(monra_krip, method = "interval")
+
+
+intentionality_krip <- intentionality_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+intentionality_krip <- as.matrix(intentionality_krip)
+
+kripp.alpha(intentionality_krip, method = "interval")
+
+
+
+instrumental_krip <- instrumental_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+instrumental_krip <- as.matrix(instrumental_krip)
+
+kripp.alpha(instrumental_krip, method = "interval")
+
+
+complexity_krip <- complexity_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+complexity_krip <- as.matrix(complexity_krip)
+
+kripp.alpha(complexity_krip, method = "interval")
+
+
+repetition_krip <- repetition_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+repetition_krip <- as.matrix(repetition_krip)
+
+kripp.alpha(repetition_krip, method = "interval")
+
+
+melody_krip <- melody_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+melody_krip <- as.matrix(melody_krip)
+
+kripp.alpha(melody_krip, method = "interval")
+
+
+rhythm_krip <- rhythm_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+rhythm_krip <- as.matrix(rhythm_krip)
+
+kripp.alpha(rhythm_krip, method = "interval")
+
+
+harmony_krip <- harmony_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+harmony_krip <- as.matrix(harmony_krip)
+
+kripp.alpha(harmony_krip, method = "interval")
+
+
+timbre_krip <- timbre_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+timbre_krip <- as.matrix(timbre_krip)
+
+kripp.alpha(timbre_krip, method = "interval")
+
+
+tempo_krip <- tempo_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+tempo_krip <- as.matrix(tempo_krip)
+
+kripp.alpha(tempo_krip, method = "interval")
+
+
+pulse_krip <- pulse_mm1 %>%
+  dplyr::select(!exp_subject_id)
+
+pulse_krip <- as.matrix(pulse_krip)
+
+kripp.alpha(pulse_krip, method = "interval")
+
+
+
+```
+
+
+Linear Mixed Effects Model to predict MoNRa by perceptual features (reported)
+
+```{r}
+ratings$audio_name <- as.factor(ratings$audio_name)
+ratings$label <- factor(ratings$label, levels = c("non-music", "ambiguous", "music"))
+ratings_long$label <- factor(ratings_long$label, levels = c("non-music", "ambiguous", "music"))
+ratings_long$variable <- factor(ratings_long$variable, levels = c("monra", "timbre", "tempo", "pulse", "repetition", "harmony", "rhythm", "melody", "complexity", "instrumental", "intentionality"))
+
+null_model <- lmer(monra ~ 1 + (1 | exp_subject_id) + (1 | audio_name), data = ratings)
+
+perceptual_model <- lmer(monra ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse + (1 | exp_subject_id) + (1 | audio_name), data = ratings)
+
+summary(perceptual_model)
+r.squaredGLMM(perceptual_model)
+car::vif(perceptual_model) 
+rand(perceptual_model)
+performance::icc(perceptual_model, by_group = TRUE)
+
+anova(null_model, perceptual_model)
+
+residuals_perceptual <- residuals(perceptual_model)
+hist(residuals_perceptual)
+
+sjPlot::plot_model(perceptual_model, show.values=TRUE, show.p=TRUE, #type = "std",
+                   vline.color = "gray", value.size = 5) +
+  ylim(-0.02,0.2) +
+  theme_classic(base_size = 20) +
+  theme(axis.title.x = element_text(size = 20)) +
+  labs(
+    title = " "
+  )
+
+```
+
+
+Acoustic Feature Selection
+
+Comparing acoustic vs. perceptual features in predicting a music category
+
+
+Packages
+
+```{r}
+
+suppressWarnings(suppressMessages(library(broom.mixed)))
+suppressWarnings(suppressMessages(library(cowplot)))
+suppressWarnings(suppressMessages(library(factoextra)))
+suppressWarnings(suppressMessages(library(ggfortify)))
+suppressWarnings(suppressMessages(library(lme4)))
+suppressWarnings(suppressMessages(library(lmerTest)))
+suppressWarnings(suppressMessages(library(ordinal)))
+suppressWarnings(suppressMessages(library(rcompanion)))
+suppressWarnings(suppressMessages(library(stats)))
+suppressWarnings(suppressMessages(library(writexl)))
+
+```
+
+ACOUSTIC FEATURE dplyr::selectION
+
+
+Get and prepare data:
+```{r}
+
+options(scipen=999)
+
+#The features have been extracted already, we read in the data
+
+acoustics_mir<- read_excel("essentia_acoustics_2.xlsx",
+    sheet = "Sheet1") 
+
+# We clean the names
+
+acoustics_mir$audio_name <- sub("\\.mp3.*", ".mp3", acoustics_mir$audio_name)
+
+# Get the column names
+col_names <- colnames(acoustics_mir)
+#col_names
+
+# Remove "" from the end of each column name
+clean_col_names <- gsub('""$', '', col_names)
+
+# Assign the cleaned column names back to the dataframe
+colnames(acoustics_mir) <- clean_col_names
+
+# Check the cleaned column names
+#print(colnames(acoustics_mir))
+
+acoustics_mir <- acoustics_mir %>%
+  left_join(audio_descriptives %>%
+              dplyr::select(audio_name, label, mean_monra),
+            by = "audio_name") %>%
+  dplyr::select(audio_name, label, mean_monra, everything())
+
+
+acoustics_mir <- acoustics_mir %>%
+  dplyr::select(!id) %>%
+  dplyr::select(!average_loudness.value) 
+
+acoustics_mir <- acoustics_mir %>% dplyr::select(, 1:251)
+
+```
+
+
+Scale data:
+```{r}
+
+scaled_mir_ <- acoustics_mir |> 
+  dplyr::select(!mean_monra) |> 
+  mutate_if(is.numeric,scale)
+
+# Scale columns 4 to 251
+scaled_columns <- scale(acoustics_mir[, 4:251])
+
+# Combine the unscaled first three columns with the scaled columns
+acoustics_mir_scaled <- cbind(acoustics_mir[, 1:3], as.data.frame(scaled_columns))
+
+#names(scaled_mir_)
+#names(acoustics_mir)
+
+```
+
+First clean out obviously redundant features. 
+barkbands.dmean_01-27 are the same as frequency_bands.dmean_01-27; subband_mean/std (2-10) same as mfcc2_mean/std; also remove spectral_energyband_low.dvar
+
+These are 72 acoustic features that do not have correlations above .75 with each other.
+
+```{r}
+
+numeric_mir <- acoustics_mir_scaled[, 4:251]
+  
+highly_corr<-fuzzySim::corSelect(numeric_mir, cor.thresh = .75, var.cols =1:248)
+
+redundant_variables<-highly_corr$excluded.vars[1:176]
+
+count(highly_corr$high.correlations)
+
+acoustics_mir_scaled_nocollinear <- acoustics_mir_scaled %>% dplyr::select(!all_of(redundant_variables)) 
+
+```
+
+
+Now, we correlate each acoustic feature with mean music ratings to see how the relationships look like
+```{r}
+
+acoustic_features_to_correlate <- acoustics_mir_scaled_nocollinear[, 
+                sapply(acoustics_mir_scaled_nocollinear, is.numeric) & 
+                names(acoustics_mir_scaled_nocollinear) != "mean_monra"
+              ]
+
+# Compute correlations
+full_cor_results <- sapply(acoustic_features_to_correlate, function(column) {
+  cor(column, acoustics_mir_scaled_nocollinear$mean_monra, use = "complete.obs")
+})
+
+# Format results
+full_cor_df <- data.frame(
+  Variable = names(full_cor_results),
+  Correlation = full_cor_results,
+  stringsAsFactors = FALSE
+)
+
+# Order by absolute correlation
+full_cor_df <- full_cor_df[order(-abs(full_cor_df$Correlation)), ]
+
+# Print only the first 10 features that have abvolsute highest correlations with music ratings (that we will pick)
+print(head(full_cor_df, 10))
+
+```
+
+
+Now, dplyr::select the 10 acoustic features that have the abolsute highest correlation to mean_monra
+```{r}
+acoustics_cluster_absolute_corr <- dplyr::select(acoustics_mir_scaled_nocollinear, audio_name, label, mean_monra, pitch_salience.dmean, silence_rate_30dB.dmean, scvalleys.dvar_01, gfcc.dmean_11, gfcc.dmean_09, zerocrossingrate.dvar, pitch_instantaneous_confidence.dvar, spectral_contrast.dvar_01, barkbands.dmean_23, gfcc.dmean_13)
+
+write_xlsx(acoustics_cluster_absolute_corr, "acoustics_cluster_absolute_corr.xlsx")
+
+
+write_xlsx(acoustics_mir_scaled_nocollinear, "acoustics_mir_scaled_nocollinear.xlsx")
+```
+
+
+Comparing acoustic vs. perceptual features in predicting a music category
+
+
+Packages
+
+```{r}
+
+suppressWarnings(suppressMessages(library(broom.mixed)))
+suppressWarnings(suppressMessages(library(cowplot)))
+suppressWarnings(suppressMessages(library(factoextra)))
+suppressWarnings(suppressMessages(library(ggfortify)))
+suppressWarnings(suppressMessages(library(lme4)))
+suppressWarnings(suppressMessages(library(lmerTest)))
+suppressWarnings(suppressMessages(library(ordinal)))
+suppressWarnings(suppressMessages(library(rcompanion)))
+suppressWarnings(suppressMessages(library(stats)))
+suppressWarnings(suppressMessages(library(writexl)))
+
+```
+
+Reading in DFs
+
+```{r}
+acoustics_mir_scaled_nocollinear <- read_excel("acoustics_mir_scaled_nocollinear.xlsx",
+    sheet = "Sheet1") 
+
+monra_data <- read_excel("monra_data.xlsx",
+    sheet = "Sheet1") 
+
+acoustics_cluster_absolute_corr <- read_excel("acoustics_cluster_absolute_corr.xlsx",
+    sheet = "Sheet1") 
+
+```
+
+
+############################# PCA WITH PERCEPTUAL FEATURES
+
+We reduce the dimensionality of our perceptual features to later use these principal components in modeling. We dplyr::select the first two principal components here. 
+
+```{r}
+
+pca_result_perceptual <- prcomp(audio_descriptives[,3:12], center = TRUE, scale. = TRUE)
+
+eig.val_per <- get_eigenvalue(pca_result_perceptual)
+eig.val_per
+
+# number of PCs to keep
+pcdims_per = 10
+
+# Print eigenvalues
+eig.val_per[c(1:pcdims_per),]
+
+res.feats_per <- get_pca_var(pca_result_perceptual)
+
+contribdf_per  = as.data.frame(res.feats_per$contrib[,c(1:pcdims_per)])
+round(contribdf_per, digits=2)
+
+loadings_per <- pca_result_perceptual$rotation
+loadings_per[,c(1:2)]
+
+res.ind_per <- get_pca_ind(pca_result_perceptual)
+
+pc_scores_per = pca_result_perceptual$x
+
+pca_data_perc <- as.data.frame(pca_result_perceptual$x)
+pca_data_perc$label <- acoustics_cluster_absolute_corr$label
+
+audio_descriptives$PC1 = pc_scores_per[,1]*-1
+audio_descriptives$PC2 = pc_scores_per[,2]
+
+
+```
+
+PCA to reduce the number of acoustic features, we dplyr::select the first 2 principal components. 
+
+```{r}
+acoustics_cluster_absolute_corr <- acoustics_cluster_absolute_corr %>%
+  mutate(order = ifelse(label == "non-music", 1,
+                 ifelse(label == "ambiguous", 2,
+                 ifelse(label == "music", 3, NA))))
+
+acoustics_cluster_absolute_corr$order <- as.factor(acoustics_cluster_absolute_corr$order)
+
+
+pca_result_abs <- prcomp(acoustics_cluster_absolute_corr[4:13], center = TRUE, scale. = FALSE)
+
+fviz_eig(pca_result_abs, addlabels = TRUE, ylim = c(0, 100)) +
+  theme_minimal() +  # Minimal theme for a clean look
+  theme(
+    panel.grid.major = element_blank(),    # Remove major grid lines
+    panel.grid.minor = element_blank(),    # Remove minor grid lines
+    panel.background = element_blank(),    # Remove background color
+    axis.line = element_line(colour = "black"),  # Add axis lines
+    legend.position = "NONE",             # Remove the legend
+    text = element_text(size = 16)) 
+
+pc_scoreabs = pca_result_abs$x
+
+acoustics_cluster_absolute_corr$PC1ac = pc_scoreabs[,1]
+acoustics_cluster_absolute_corr$PC2ac = pc_scoreabs[,2]
+```
+
+Here, we carry out 2 cumulative link models to predict categories using the ordinal package in 2 separate models: acoustic model and the perceptual model
+
+Note: The signs of the principal components in this script may differ from those reported in the paper, as the component directions were flipped for easier interpretation (although they remained unchanged here). This transformation does not affect the validity or statistical results of the model.
+
+
+```{r}
+
+clm_df <- audio_descriptives |> 
+  dplyr::select(audio_name, PC1, PC2) |> 
+left_join(acoustics_cluster_absolute_corr |> 
+            dplyr::select(audio_name, PC1ac, PC2ac),
+          by = "audio_name") |> 
+left_join(ratings_order |> 
+            distinct(audio_name, order), 
+          by = "audio_name")
+
+clm_ac_abs <- clm(order ~ PC1ac + PC2ac, data = clm_df)
+clm_perceptual <- clm(order ~ PC1 + PC2, data = clm_df)
+clm_order_null <- clm(order ~ 1, data = clm_df)
+
+summary(clm_ac_abs)
+summary(clm_perceptual)
+
+anova(clm_ac_abs, clm_order_null)
+anova(clm_perceptual, clm_order_null)
+
+###Pseudo r sqaured
+nagelkerke(clm_ac_abs, clm_order_null)
+nagelkerke(clm_perceptual, clm_order_null)
+
+# Compare AIC
+AIC(clm_perceptual, clm_ac_abs)
+
+# Compare BIC
+BIC(clm_perceptual, clm_ac_abs)
+
+
+write_xlsx(clm_df, "clm_df.xlsx")
+```
+
+Hence, the perceptual model outperforms the acoutic model. 
+
+Reported PCA Plots (Figure 3A)
+
+```{r}
+library(cowplot)
+
+acoustic_pca_plot <- autoplot(pca_result_abs, 
+         data = acoustics_cluster_absolute_corr, 
+         colour = 'label', 
+         loadings = TRUE, 
+         loadings.label = TRUE,
+         loadings.color = "black",
+         loadings.label.color = "black",
+         loadings.label.repel = TRUE,
+         loadings.label.size = 5,
+         frame = TRUE,
+         frame.type = 'norm') +
+  # Customize appearance
+  theme_minimal() +  # Minimal theme for a clean look
+  theme(
+    panel.grid.major = element_blank(),    # Remove major grid lines
+    panel.grid.minor = element_blank(),    # Remove minor grid lines
+    panel.background = element_blank(),    # Remove background color
+    axis.line = element_line(colour = "black"),  # Add axis lines
+    legend.position = "NONE",             # Remove the legend
+    text = element_text(size = 30)         # Increase text size
+  ) +
+  scale_color_manual(values = c("music" = "red", "ambiguous" = "blue", "non-music" = "green")) +
+   scale_fill_manual(values = c("music" = "red", "ambiguous" = "blue", "non-music" = "green")) + # Custom colors
+  labs(
+    title = " ",
+    colour = "Mean MONRA Rating"           # Label for the legend
+  ) 
+
+perceptual_pca_plot <- autoplot(pca_result_perceptual, 
+         data = audio_descriptives, 
+         colour = 'label', 
+         loadings = TRUE, 
+         loadings.label = TRUE,
+         loadings.color = "black",
+         loadings.label.color = "black",
+         loadings.label.repel = TRUE,
+         loadings.label.size = 5,
+         frame = TRUE,
+         frame.type = 'norm') +
+  # Customize appearance
+  theme_minimal() +  # Minimal theme for a clean look
+  theme(
+    panel.grid.major = element_blank(),    # Remove major grid lines
+    panel.grid.minor = element_blank(),    # Remove minor grid lines
+    panel.background = element_blank(),    # Remove background color
+    axis.line = element_line(colour = "black"),  # Add axis lines
+    legend.position = "NONE",             # Remove the legend
+    text = element_text(size = 30)         # Increase text size
+  ) +
+  scale_color_manual(values = c("music" = "red", "ambiguous" = "blue", "non-music" = "green")) +
+   scale_fill_manual(values = c("music" = "red", "ambiguous" = "blue", "non-music" = "green")) + # Custom colors
+  labs(
+    title = " ",
+    colour = "Mean MONRA Rating"           # Label for the legend
+  ) 
+
+legend_pca <- ggplot(data = audio_descriptives, aes(x = 1, y = 1, colour = label)) +
+  geom_point() +
+  scale_color_manual(values = c("music" = "red", "ambiguous" = "blue", "non-music" = "green"),
+                     labels = c("Ambiguous", "Music", "Non-music")) +
+  theme_void() + 
+  theme(legend.position = "right") +
+  guides(colour = guide_legend(override.aes = list(size = 5))) +
+  labs(colour = NULL)  # Remove the legend title
+
+
+loadings_labels <- rownames(pca_result_perceptual$rotation)
+
+# Remove "mean_" from the loadings labels and capitalize the first letter
+loadings_labels <- gsub("^mean_", "", loadings_labels)  # Remove "mean_"
+loadings_labels <- tools::toTitleCase(loadings_labels)  # Capitalize first letter
+
+# Reassign the modified labels back to the PCA object
+rownames(pca_result_perceptual$rotation) <- loadings_labels
+
+
+
+cowplot::plot_grid(acoustic_pca_plot, perceptual_pca_plot, legend_pca, ncol = 3, rel_widths = c(0.8, 0.8, 0.1))
+
+
+```
+
+Boxplots of mean feature ratings across clusters (Figure 3B)
+```{r}
+
+audio_features_long <- pivot_longer(audio_features,
+                                  cols = c(mean_pulse, mean_rhythm, mean_repetition, mean_melody, mean_instrumental, 
+                                                 mean_timbre, mean_tempo, mean_intentionality, mean_harmony, mean_complexity), 
+                                  names_to = "variable",    
+                                  values_to = "value")
+
+audio_features_long$variable <- as.factor(audio_features_long$variable)
+audio_features_long$label <- factor(audio_features_long$label, levels = c("music", "ambiguous", "non-music"))
+
+
+ # Modify the 'variable' column: Remove "mean_" and capitalize the first letter
+audio_features_long <- audio_features_long %>%
+  mutate(variable = gsub("^mean_", "", variable),      # Remove "mean_"
+         variable = tools::toTitleCase(variable))     # Capitalize first letter
+
+audio_features_long$variable <- factor(audio_features_long$variable, 
+                                      levels = c("Intentionality", "Instrumental", "Complexity", "Repetition", "Melody", "Harmony", "Rhythm", "Tempo", "Timbre", "Pulse"))
+
+
+ ratings_cluster_plot_mean <- ggplot(audio_features_long, aes(x = label, y = value, color = label, fill = label)) +
+  geom_boxplot(alpha = 0.5, position = position_dodge(width = 0.75)) +
+   geom_jitter(alpha = 0.3, size = 1) +
+  theme_minimal(base_size = 16) +  # Increase base font size
+  theme(
+    axis.title = element_text(size = 30),
+    plot.title = element_text(size = 18, face = "bold"),
+    legend.position = "none",  # Hide legend
+    strip.text = element_text(size = 16),  # Facet label text
+    panel.grid.major = element_blank(),  # Remove major grid lines
+    axis.text.x = element_blank(),
+    axis.text.y = element_text(angle = 90, vjust = 0.5, hjust = 1), # Rotate x-axis text
+    axis.title.y = element_text(size = 30)
+  ) +
+   ylim(0,100) +
+  labs(
+    title = " ",
+    x = " ",
+    y = "Ratings"
+  ) +
+  facet_grid(~variable, scales = "free_x", space = "free")  +
+  scale_color_manual(values = c("music" = "red", "ambiguous" = "blue", "non-music" = "#3CB371")) +
+  scale_fill_manual(values = c("music" = "red", "ambiguous" = "blue", "non-music" = "#3CB371"))
+
+ 
+ratings_cluster_plot_mean
+
+```
+
+
+Radar Chart of mean feature ratings for different clusters (Figure 3C)
+```{r}
+
+audio_descriptives_wo_monra <- audio_descriptives %>%
+  dplyr::select(cluster, label, mean_repetition, mean_timbre, mean_tempo, mean_pulse, mean_harmony, mean_melody, mean_rhythm, mean_complexity, mean_intentionality, mean_instrumental)
+
+subgroup_summary_pag <- audio_descriptives_wo_monra %>%
+  group_by(label) %>%
+  summarise(across(starts_with("mean"), list(mean = mean), .names = "{.col}_{.fn}")) %>%
+  rename(mean_pulse = mean_pulse_mean,
+         mean_rhythm = mean_rhythm_mean,
+         mean_timbre = mean_timbre_mean,
+         mean_repetition = mean_repetition_mean,
+         mean_tempo = mean_tempo_mean,
+         mean_melody = mean_melody_mean,
+         mean_harmony = mean_harmony_mean,
+         mean_intentionality = mean_intentionality_mean,
+         mean_instrumental = mean_instrumental_mean,
+         mean_complexity = mean_complexity_mean) 
+
+
+# Prepare the data by adding max and min rows
+max_values <- rep(100, ncol(subgroup_summary_pag) - 1)
+min_values <- rep(0, ncol(subgroup_summary_pag) - 1)
+data_for_radar <- rbind(max_values, min_values, subgroup_summary_pag[, -1])
+
+# Add row names for clarity (optional)
+rownames(data_for_radar) <- c("Max", "Min", paste(subgroup_summary_pag$label))
+
+data_for_radar <- data_for_radar %>%
+  rename(Repetition = mean_repetition,
+         Timbre = mean_timbre,
+         Instrumental = mean_instrumental,
+         Intentionality = mean_intentionality,
+         Complexity = mean_complexity,
+         Melody = mean_melody,
+         Harmony = mean_harmony,
+         Rhythm = mean_rhythm,
+         Pulse = mean_pulse,
+         Tempo = mean_tempo)
+
+
+
+# Create the radar chart
+radarchart(data_for_radar, 
+           axistype = 1,
+           # Customize the appearance
+           pcol = c("blue", "red", "green"),  # Colors for each cluster (nonmusic, ambiguous, music)
+           plwd = 4,  # Line width
+           plty = 1,  # Line type
+           cglcol = "grey",  # Color of the grid lines
+           cglty = 1,  # Type of the grid lines
+           axislabcol = "black",  # Color of the axis labels
+           caxislabels = seq(0, 100, by = 20),  # Axis labels from 0 to 100
+           vlcex = 1.5,  # Variable label size
+           calcex = 0.9,  # Axis label size
+           maxmin = TRUE,  # Ensure max and min values are used
+           seg = 5  # Force 5 segments (0, 20, 40, 60, 80, 100)
+)
+
+```
+
+Now, the idea is to try and identify different participant profiles to underIdentifying participant classes
+
+```{r}
+suppressWarnings(suppressMessages(library(broom)))
+suppressWarnings(suppressMessages(library(dplyr)))
+suppressWarnings(suppressMessages(library(ggfortify)))
+suppressWarnings(suppressMessages(library(gt)))
+suppressWarnings(suppressMessages(library(jtools)))
+suppressWarnings(suppressMessages(library(lcmm)))
+suppressWarnings(suppressMessages(library(lme4)))
+suppressWarnings(suppressMessages(library(lmerTest)))
+suppressWarnings(suppressMessages(library(lmtest)))
+suppressWarnings(suppressMessages(library(stringr)))
+suppressWarnings(suppressMessages(library(viridis)))
+suppressWarnings(suppressMessages(library(xtable)))
+```
+
+We carry out a latent class linear mixed model to identify different participant profiles. We try having up to 6 different profiles (This code will be time consuming, it took us half a day to run.)
+
+Notice that we use "class" and "profile" interchangeably...
+
+```{r}
+
+m_random <- hlme(
+  fixed = monra ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse,
+  random = ~ 1, 
+  subject = 'exp_subject_id', 
+  ng = 1, 
+  data = ratings
+)
+
+
+m_2cl <- hlme(
+  fixed = monra ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse,
+  mixture = ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse,
+  random = ~ 1,
+  subject = 'exp_subject_id',
+  ng = 2,
+  B = m_random,  # Use m_random as initial values
+  data = ratings
+)
+
+
+m_3cl <- hlme(
+  fixed = monra ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse,
+  mixture = ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse,
+  random = ~ 1,
+  subject = 'exp_subject_id',
+  ng = 3,
+  B = m_random,  # Use m_random as initial values
+  data = ratings
+)
+
+m_4cl <- hlme(
+  fixed = monra ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse,
+  mixture = ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse,
+  random = ~ 1,
+  subject = 'exp_subject_id',
+  ng = 4,
+  B = m_random,  # Use m_random as initial values
+  data = ratings
+)
+
+
+m_5cl <- hlme(
+  fixed = monra ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse,
+  mixture = ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse,
+  random = ~ 1,
+  subject = 'exp_subject_id',
+  ng = 5,
+  B = m_random,  # Use m_random as initial values
+  data = ratings
+)
+
+
+m_6cl <- hlme(
+  fixed = monra ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse,
+  mixture = ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse,
+  random = ~ 1,
+  subject = 'exp_subject_id',
+  ng = 6,
+  B = m_random,  # Use m_random as initial values
+  data = ratings
+)
+
+d<-summarytable(m_random, m_2cl, m_3cl, m_4cl, m_5cl, m_6cl,
+                 which = c("G", "loglik", "npm", "BIC", "%class", "entropy")) #??? classes is better
+
+d<- as.data.frame(d)
+d
+
+# summary(m_random)
+# summary(m_2cl)
+# summary(m_3cl)
+# summary(m_4cl)
+# summary(m_5cl)
+# summary(m_6cl)
+
+logLik_2cl <- m_2cl$loglik
+logLik_3cl <- m_3cl$loglik
+logLik_4cl <- m_4cl$loglik
+logLik_5cl <- m_5cl$loglik
+logLik_6cl <- m_6cl$loglik
+
+```
+
+Selection of the number of classes: 7 criteria (see https://www.displayr.com/work-number-classes-latent-class-analysis/#)
+
+We will look at the BIC and the "no small classes" criteria
+
+No small classes: The basic idea of this approach is that you choose the highest number of classes, such that none of the classes are small (e.g., less than 5% of the sample). This rule has long been used in practice as a part of the idea of domain-usefulness but has recently been discovered also to have some theoretical justification (Nasserinejad, K., van Rosmalen, J., de Kort, W., Lesaffre, E. (2017) Comparison of criteria for choosing the number of classes in Bayesian finite mixture models. PloS one, 12).
+
+Based on these criteria, and table "d", we picked the solution with 5 classes.
+
+```{r}
+# postprob(m_2cl) 
+# postprob(m_3cl) 
+# postprob(m_4cl) 
+# postprob(m_5cl) 
+# postprob(m_6cl) 
+# 
+# summary(m_5cl)
+
+
+people_2_classes <- as.data.frame(m_2cl$pprob)
+people_3_classes <- as.data.frame(m_3cl$pprob)
+people_4_classes <- as.data.frame(m_4cl$pprob)
+people_5_classes <- as.data.frame(m_5cl$pprob)
+people_6_classes <- as.data.frame(m_6cl$pprob)
+# View(people_5_classes)
+
+
+people_2_classes$twoclasses <- people_2_classes$class
+people_3_classes$threeclasses <- people_3_classes$class
+people_4_classes$fourclasses <- people_4_classes$class
+people_6_classes$sixclasses <- people_6_classes$class
+
+
+```
+
+
+Here, I add the 5-class-solution in the ratings DF. 
+
+```{r}
+#Class is the solution we picked, it includes 5 classes, numbers from 1 to 5 shows which class a participants has been assigned. 
+
+ratings_class <- ratings %>%
+  left_join(people_5_classes %>%
+              dplyr::select(exp_subject_id, class),
+            by = "exp_subject_id")
+
+
+```
+
+The mean ratings of features for each of the 5 profiles. 
+
+```{r}
+
+cluster_means <- aggregate(
+  . ~ class, 
+  data = ratings_class[, c("class", "intentionality", "instrumental", "complexity", "repetition", "melody", "harmony", "rhythm", "timbre", "tempo", "pulse")], 
+  mean
+)
+
+cluster_sd <- aggregate(
+  . ~ class, 
+  data = ratings_class[, c("class", "intentionality","instrumental", "complexity", "repetition", "melody", "harmony", "rhythm", "timbre", "tempo", "pulse")], 
+  sd
+)
+
+print(cluster_means)
+print(cluster_sd)
+
+
+```
+
+
+Now we carry LMMs for each profile. Caution, that we have less participants in each model, increasing the possibility for multicollinarity and other issues... 
+
+```{r}
+##1 CLASS
+
+class1_models <- ratings_class %>%
+  filter(class == "1") %>%
+  lmer(monra ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse + (1 | exp_subject_id) + (1 | audio_name), data = .)
+
+summary(class1_models)
+r.squaredGLMM(class1_models)
+car::vif(class1_models) 
+rand(class1_models)
+performance::icc(class1_models, by_group = TRUE)
+
+
+
+class2_models <- ratings_class %>%
+  filter(class == "2") %>%
+  lmer(monra ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse + (1 | exp_subject_id) + (1 | audio_name), data = .)
+
+summary(class2_models)
+r.squaredGLMM(class2_models)
+car::vif(class2_models) 
+rand(class2_models)
+performance::icc(class2_models, by_group = TRUE)
+
+
+
+class3_models <- ratings_class %>%
+  filter(class == "3") %>%
+  lmer(monra ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse + (1 | exp_subject_id) + (1 | audio_name), data = .)
+
+summary(class3_models)
+r.squaredGLMM(class3_models)
+car::vif(class3_models) 
+rand(class3_models)
+performance::icc(class3_models, by_group = TRUE)
+
+
+class4_models <- ratings_class %>%
+  filter(class == "4") %>%
+  lmer(monra ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse + (1 | exp_subject_id) + (1 | audio_name), data = .)
+
+summary(class4_models)
+r.squaredGLMM(class4_models)
+car::vif(class4_models) 
+rand(class4_models)
+performance::icc(class4_models, by_group = TRUE)
+
+class5_models <- ratings_class %>%
+  filter(class == "5") %>%
+  lmer(monra ~ intentionality + instrumental + complexity + repetition + melody + harmony + rhythm + timbre + tempo + pulse + (1 | exp_subject_id) + (1 | audio_name), data = .)
+
+summary(class5_models)
+r.squaredGLMM(class5_models)
+car::vif(class5_models) 
+rand(class5_models)
+performance::icc(class5_models, by_group = TRUE)
+```
+
+Reported figure in the paper
+
+```{r}
+# Generate Viridis color palette with 5 distinct colors
+viridis_colors <- viridis_pal(option = "D")(5)
+
+plot_summs(class1_models, class2_models, class3_models, class4_models, class5_models, 
+           scale = FALSE, 
+           colors = viridis_colors,
+           model.names = c("Class 1", "Class 2", "Class 3", "Class 4", "Class 5")) +
+  theme_minimal(base_size = 14) +  
+  theme(
+    axis.text = element_text(size = 25),      
+    legend.text = element_text(size = 16),    
+    legend.title = element_blank(),  # Adjust legend title size
+    plot.title = element_text(size = 20, face = "bold"),
+    axis.title.x = element_text(size = 20),
+    axis.title.y = element_blank()
+  ) +
+  labs(color = "Class")  # Rename the legend title
+
+
+```
+
+Participant characteristics and classes... We check if participants in these different profiles differ regarding age, auditory imagery, musical sophistication, or openness to experience...
+
+```{r}
+
+means_scales_age_class <- means_scales_age %>%
+  left_join(people_5_classes %>%
+              dplyr::select(exp_subject_id, class),
+            by = "exp_subject_id")
+
+str(means_scales_age_genres)
+
+# ANOVA for 'bais'
+anova_bais <- aov(bais ~ factor(class), data = means_scales_age_class)
+summary(anova_bais)
+
+# ANOVA for 'gold'
+anova_gold <- aov(gold ~ factor(class), data = means_scales_age_class)
+summary(anova_gold)
+
+# ANOVA for 'total_openness'
+anova_openness <- aov(total_openness ~ factor(class), data = means_scales_age_class)
+summary(anova_openness)
+
+# ANOVA for 'age'
+anova_age <- aov(age ~ factor(class), data = means_scales_age_class)
+summary(anova_age)
+
+```
+
+They don't.
+
+Reported figure of age, BAIS-V, Gold-MSI and Openness scores of all 5 classes
+
+```{r}
+
+means_scales_age_class$class <- as.factor(means_scales_age_class$class)
+
+ggplot(means_scales_age_class, aes(x = class, y = age, color = class, fill = class)) +
+  geom_boxplot(alpha = 0.5, position = position_dodge(width = 0.75)) +
+  geom_jitter(alpha = 0.05, size = 1) +
+  scale_color_viridis_d() +  
+  labs(x = "Class", y = "Age") +
+  scale_fill_viridis_d() +   
+  theme_minimal(base_size = 16) + 
+  theme(
+    axis.title = element_text(size = 30),
+    plot.title = element_text(size = 18, face = "bold"),
+    legend.position = "none",  
+    strip.text = element_text(size = 16),  
+    panel.grid.major = element_blank(),  
+    axis.text.y = element_text(angle = 90, vjust = 0.5, hjust = 1) 
+  ) +
+  ggplot(means_scales_age_class, aes(x = class, y = bais, color = class, fill = class)) +
+  geom_boxplot(alpha = 0.5, position = position_dodge(width = 0.75)) +
+  geom_jitter(alpha = 0.05, size = 1) +
+  scale_color_viridis_d() +  
+  labs(x = "Class", y = "BAIS-V") +
+  scale_fill_viridis_d() +   
+  theme_minimal(base_size = 16) + 
+  theme(
+    axis.title = element_text(size = 30),
+    plot.title = element_text(size = 18, face = "bold"),
+    legend.position = "none",  
+    strip.text = element_text(size = 16),  
+    panel.grid.major = element_blank(),  
+    axis.text.y = element_text(angle = 90, vjust = 0.5, hjust = 1) 
+  ) +
+  ggplot(means_scales_age_class, aes(x = class, y = gold, color = class, fill = class)) +
+  geom_boxplot(alpha = 0.5, position = position_dodge(width = 0.75)) +
+  geom_jitter(alpha = 0.05, size = 1) +
+  scale_color_viridis_d() +  
+  labs(x = "Class", y = "Gold-MSI") +
+  scale_fill_viridis_d() +   
+  theme_minimal(base_size = 16) + 
+  theme(
+    axis.title = element_text(size = 30),
+    plot.title = element_text(size = 18, face = "bold"),
+    legend.position = "none",  
+    strip.text = element_text(size = 16),  
+    panel.grid.major = element_blank(),  
+    axis.text.y = element_text(angle = 90, vjust = 0.5, hjust = 1) 
+  ) +
+  ggplot(means_scales_age_class, aes(x = class, y = total_openness, color = class, fill = class)) +
+  geom_boxplot(alpha = 0.5, position = position_dodge(width = 0.75)) +
+  geom_jitter(alpha = 0.05, size = 1) +
+  scale_color_viridis_d() +  
+  labs(x = "Class", y = "Openness") +
+  scale_fill_viridis_d() +   
+  theme_minimal(base_size = 16) + 
+  theme(
+    axis.title = element_text(size = 30),
+    plot.title = element_text(size = 18, face = "bold"),
+    legend.position = "none",  
+    strip.text = element_text(size = 16),  
+    panel.grid.major = element_blank(),  
+    axis.text.y = element_text(angle = 90, vjust = 0.5, hjust = 1) 
+  ) 
+  
+
+```
+
+
+Let's summarize the findings in a table!
+
+```{r}
+
+# Create a list of your models
+models <- list(class1 = class1_models, 
+               class2 = class2_models, class3 = class3_models, 
+               class4 = class4_models, class5 = class5_models)
+
+fixed_effects_list <- purrr::map(models, ~ broom::tidy(.x, effects = "fixed"))
+
+# Combine into a single data frame
+fixed_effects <- bind_rows(fixed_effects_list, .id = "class")
+
+fixed_effects <- fixed_effects %>%
+  mutate(significance = case_when(
+    p.value < 0.001 ~ "***",
+    p.value < 0.01  ~ "**",
+    p.value < 0.05  ~ "*",
+    TRUE            ~ "ns"
+  ))
+
+# Calculate R^2 for each model and include class
+rsquared_values <- purrr::imap(models, ~ {
+  r2 <- r.squaredGLMM(.x)  # Calculate R2
+  tibble(
+    class = .y,            # Add class name (model name or identifier)
+    R2m = r2[1],           # Marginal R2
+    R2c = r2[2]            # Conditional R2
+  )
+}) %>% bind_rows()  # Combine the list of tibbles into a single data frame
+
+# Print the resulting data frame
+print(rsquared_values)
+
+
+print(rsquared_values)
+
+# Reshape to make features (terms) rows and classes columns
+significance_table <- fixed_effects %>%
+  dplyr::select(class, term, significance) %>%
+  pivot_wider(names_from = class, values_from = significance, values_fill = "ns")
+
+rsquared_rows <- rsquared_values %>%
+  pivot_longer(cols = starts_with("R"), names_to = "term", values_to = "value") %>%
+  mutate(term = case_when(
+    term == "R2m" ~ "Marginal R²",
+    term == "R2c" ~ "Conditional R²"
+  )) %>%
+  pivot_wider(names_from = class, values_from = value, names_prefix = "class") %>%
+  mutate(across(-term, as.character))  # Ensure compatibility with `significance
+
+rsquared_rows <- rsquared_rows %>%
+  mutate(across(starts_with("class"), ~ as.character(.)))
+
+rsquared_rows_clean <- rsquared_rows %>%
+  rename_with(~ sub("^class", "", .), starts_with("class"))
+
+# Then you can continue your pipeline with the cleaned data
+combined_table <- bind_rows(significance_table, rsquared_rows_clean)
+
+participant_counts <- tibble(
+  term  = "# of Participants",
+  class1 = "17", 
+  class2 = "14", 
+  class3 = "21", 
+  class4 = "35", 
+  class5 = "11"
+)
+
+# Append the participant counts to your original table
+final_table <- bind_rows(combined_table, participant_counts)
+
+# Print the updated table
+print(final_table)
+
+
+final_table %>%
+  mutate(across(
+    starts_with("class"),
+    ~ ifelse(term %in% c("Marginal R²", "Conditional R²", "# of Participants"), ., str_sub(., 1, 4))
+  )) %>%
+  mutate(across(
+    starts_with("class"),
+    ~ ifelse(term %in% c("Marginal R²", "Conditional R²"), as.numeric(.), .)
+  )) %>%
+  gt() %>%
+  tab_header(
+    title = "Significance of Predictors and R² Values Across Classes",
+    subtitle = "Significance levels: *** (<0.001), ** (<0.01), * (<0.05), ns (not significant)"
+  ) %>%
+  data_color(
+    columns = starts_with("class"),
+    colors = scales::col_factor(
+      palette = c("yellow", "orange", "red", "white"),
+      domain = c("***", "**", "*", "ns")
+    )
+  ) %>%
+  fmt_number(
+    rows = term %in% c("Marginal R²", "Conditional R²"),
+    decimals = 3
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "white"),
+    locations = cells_body(rows = term %in% c("Marginal R²", "Conditional R²"))
+  ) %>%
+  tab_style(
+    style = cell_text(color = "black"),
+    locations = cells_body(rows = term %in% c("Marginal R²", "Conditional R²", "# of Participants"))
+  ) %>%
+  tab_style(
+    style = cell_fill(color = "white"),
+    locations = cells_body(rows = term %in% c("# of Participants"))
+  )
+
+library(writexl)
+
+# Save the underlying final_table to Excel. We edited the table format and have that version in the paper (also with rounded values)
+write_xlsx(final_table, path = "final_table.xlsx")
+
+```
+
+

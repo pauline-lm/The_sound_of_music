@@ -13,7 +13,7 @@ For commercial use permissions, contact the first author (plm@ae.mpg.de)
 Manuscript: All data and code presented in the main text can be found in the folder "Manuscript".
 - Data_1-3: Data for experiments 1, 2, and 3
 - Data_4: Data for experiment 4
-- The_sound_of_music.Rmd: analysis script for all the experiments
-- The_sound_of_music.nb.html:  Output of the analyses
+- Is_it_music.Rmd: analysis script for all the experiments
+- Is_it_music.nb.html:  Output of the analyses
 
 Supplementary Material: please read the README file in each folder.

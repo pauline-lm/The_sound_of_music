@@ -1,0 +1,245 @@
+---
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+Reviewers:
+
+Comparison of features
+
+
+```{r}
+options(scipen = 999)  
+
+library(tibble)
+library(tools)
+library(readr)
+library(dplyr)
+library(factoextra)
+library(EGAnet)
+library(tools)
+library(ranger)
+library(ordinal)
+library(readxl)
+library(rcompanion)
+library(tidyr)
+```
+
+
+```{r}
+audio_descriptives <- read_excel("audio_descriptives.xlsx", sheet = "Sheet1")
+
+audio_descriptives <- audio_descriptives |>
+  mutate(label = factor(label, levels = c("non-music", "ambiguous", "music")))
+
+clean_audio <- function(x) file_path_sans_ext(basename(x))
+
+
+```
+
+Load the essentia wide features
+```{r}
+##Features used in the curve paper
+acoustic_features_curve <- read_csv(
+  "features_essentia_wide_nobeatpos.csv",
+  show_col_types = FALSE
+) %>%
+  rename(audio_name = file) %>%
+  # drop metadata columns
+  dplyr::select(-matches("^metadata\\."))
+
+acoustic_features_curve <- acoustic_features_curve %>%
+  mutate(audio_name = clean_audio(audio_name))
+
+audio_descriptives <- audio_descriptives %>%
+  mutate(audio_name = clean_audio(audio_name))
+
+# identify numeric columns (exclude audio_name)
+num_cols <- acoustic_features_curve %>% dplyr::select(where(is.numeric))
+
+# keep numeric columns with non-zero variance
+keep_num <- sapply(num_cols, function(v) sd(v, na.rm = TRUE) > 0)
+
+# rebuild: audio_name + kept numeric columns
+acoustic_features_curve <- acoustic_features_curve %>%
+  dplyr::select(audio_name, all_of(names(keep_num)[keep_num]))
+
+### to see removed features
+raw <- read_csv("features_essentia_wide_nobeatpos.csv", show_col_types = FALSE) %>%
+  rename(audio_name = file)
+
+clean <- raw %>%
+  dplyr::select(-matches("^metadata\\."))
+
+num_cols <- clean %>% dplyr::select(where(is.numeric))
+keep_num <- sapply(num_cols, function(v) sd(v, na.rm = TRUE) > 0)
+
+final <- clean %>% dplyr::select(audio_name, all_of(names(keep_num)[keep_num]))
+
+removed <- setdiff(names(raw), names(final))
+removed
+length(removed)
+
+#Scale the features
+acoustic_features_curve <- acoustic_features_curve |> 
+  mutate_if(is.numeric,scale)
+
+
+acoustic_features_curve <- acoustic_features_curve |> 
+  left_join(audio_descriptives |> 
+              dplyr::select(audio_name, mean_monra, label),
+            by = "audio_name") |> 
+  dplyr::select(audio_name, mean_monra, label, everything())
+
+acoustic_features_curve <- acoustic_features_curve %>%
+  mutate(order = ifelse(label == "non-music", 1,
+                 ifelse(label == "ambiguous", 2,
+                 ifelse(label == "music", 3, NA))))
+
+acoustic_features_curve <- acoustic_features_curve |>
+  dplyr::relocate(mean_monra, order, label, .after = audio_name)
+
+#Similar set of features extracted from MATLAB (LLM generated script)
+acoustic_features_wide_matlab <- read_delim(
+  "acoustic_features_wide_matlab.csv",
+  delim = ";",
+  show_col_types = FALSE
+) %>%
+  rename(audio_name = 1) %>%
+  dplyr::select(-matches("^metadata\\.")) %>%
+  dplyr::select(-any_of(c("id", "duration"))) %>%
+  dplyr::select(where(~ !all(is.na(.))))
+
+acoustic_features_wide_matlab <- acoustic_features_wide_matlab |> 
+  mutate_if(is.numeric,scale)
+
+acoustic_features_wide_matlab <- acoustic_features_wide_matlab %>%
+  mutate(audio_name = clean_audio(audio_name))
+
+acoustic_features_wide_matlab <- acoustic_features_wide_matlab |> 
+  left_join(audio_descriptives |> 
+              dplyr::select(audio_name, mean_monra, label),
+            by = "audio_name") |> 
+  dplyr::select(audio_name, mean_monra, label, everything())
+
+acoustic_features_wide_matlab <- acoustic_features_wide_matlab %>%
+  mutate(order = ifelse(label == "non-music", 1,
+                 ifelse(label == "ambiguous", 2,
+                 ifelse(label == "music", 3, NA))))
+
+acoustic_features_wide_matlab <- acoustic_features_wide_matlab |>
+  dplyr::relocate(mean_monra, order, label, .after = audio_name)
+
+
+```
+
+let's see what we have
+```{r}
+length(acoustic_features_wide_matlab)
+length(acoustic_features_curve)
+```
+
+
+PCA on Essentia features
+```{r}
+
+pca_curve_features <- acoustic_features_curve |>
+  dplyr::select(5:ncol(acoustic_features_curve)) |>
+  prcomp(center = FALSE, scale. = FALSE)  # already scaled, so no need to rescale
+
+acoustic_features_curve <- acoustic_features_curve |>
+  dplyr::bind_cols(as.data.frame(pca_curve_features$x[, 1:3]))
+
+fviz_eig(pca_curve_features, addlabels = TRUE, ylim = c(0, 100)) +
+  theme_minimal() +  # Minimal theme for a clean look
+  theme(
+    panel.grid.major = element_blank(),    # Remove major grid lines
+    panel.grid.minor = element_blank(),    # Remove minor grid lines
+    panel.background = element_blank(),    # Remove background color
+    axis.line = element_line(colour = "black"),  # Add axis lines
+    legend.position = "NONE",             # Remove the legend
+    text = element_text(size = 16)) 
+
+acoustic_features_curve$order <- as.factor(acoustic_features_curve$order)
+
+clm_ac_curve <- clm(order ~ PC1 + PC2, data = acoustic_features_curve)
+clm_order_null <- clm(order ~ 1, data = acoustic_features_curve)
+
+```
+
+
+```{r}
+pca_matlab_mirt <- acoustic_features_wide_matlab |>
+  dplyr::select(5:ncol(acoustic_features_wide_matlab)) |>
+  # Drop columns that are entirely NaN/NA
+  dplyr::select(where(~ !all(is.na(.)))) |>
+  prcomp(center = FALSE, scale. = FALSE)
+
+acoustic_features_wide_matlab <- acoustic_features_wide_matlab |>
+  dplyr::bind_cols(as.data.frame(pca_matlab_mirt$x[, 1:3]))
+
+fviz_eig(pca_matlab_mirt, addlabels = TRUE, ylim = c(0, 100)) +
+  theme_minimal() +  # Minimal theme for a clean look
+  theme(
+    panel.grid.major = element_blank(),    # Remove major grid lines
+    panel.grid.minor = element_blank(),    # Remove minor grid lines
+    panel.background = element_blank(),    # Remove background color
+    axis.line = element_line(colour = "black"),  # Add axis lines
+    legend.position = "NONE",             # Remove the legend
+    text = element_text(size = 16)) 
+
+
+acoustic_features_wide_matlab$order <- as.factor(acoustic_features_wide_matlab$order)
+
+clm_ac_matlabwide <- clm(order ~ PC1 + PC2, data = acoustic_features_wide_matlab)
+
+
+```
+
+
+```{r}
+
+acoustic_features_curve_lowlevel <- acoustic_features_curve |>
+  dplyr::select(1:4, dplyr::starts_with("lowlevel"))
+
+pca_lowlevel <- acoustic_features_curve_lowlevel |>
+  dplyr::select(5:ncol(acoustic_features_curve_lowlevel)) |>
+  # Drop columns that are entirely NaN/NA
+  dplyr::select(where(~ !all(is.na(.)))) |>
+  prcomp(center = FALSE, scale. = FALSE)
+
+acoustic_features_curve_lowlevel <- acoustic_features_curve_lowlevel |>
+  dplyr::bind_cols(as.data.frame(pca_lowlevel$x[, 1:3]))
+
+fviz_eig(pca_lowlevel, addlabels = TRUE, ylim = c(0, 100)) +
+  theme_minimal() +  # Minimal theme for a clean look
+  theme(
+    panel.grid.major = element_blank(),    # Remove major grid lines
+    panel.grid.minor = element_blank(),    # Remove minor grid lines
+    panel.background = element_blank(),    # Remove background color
+    axis.line = element_line(colour = "black"),  # Add axis lines
+    legend.position = "NONE",             # Remove the legend
+    text = element_text(size = 16)) 
+
+acoustic_features_curve_lowlevel$order <- as.factor(acoustic_features_curve_lowlevel$order)
+
+clm_ac_lowlevel <- clm(order ~ PC1 + PC2, data = acoustic_features_curve_lowlevel)
+
+
+
+clm_ac_matlabwide
+clm_ac_curve
+clm_ac_lowlevel
+
+nagelkerke(clm_ac_curve, clm_order_null)
+nagelkerke(clm_ac_lowlevel, clm_order_null)
+nagelkerke(clm_ac_matlabwide, clm_order_null)
+
+
+AIC(clm_ac_curve, clm_ac_lowlevel, clm_ac_matlabwide)
+BIC(clm_ac_curve, clm_ac_lowlevel, clm_ac_matlabwide)
+
+```
+
+
+
